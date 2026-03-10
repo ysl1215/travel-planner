@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateWithGroq } from "@/lib/groq";
+import { generateWithOpenRouter } from "@/lib/openrouter";
 import { buildDestinationPrompt } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
 
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = buildDestinationPrompt(input);
-    const raw = await generateWithGroq(
+    const raw = await generateWithOpenRouter(
       "You are an expert travel planner. Always respond with valid JSON only.",
       prompt
     );

@@ -17,17 +17,17 @@ An AI-powered travel planner that creates personalized destination suggestions a
 3. Click the **"Try Demo ▶"** button on the landing page — it instantly loads a pre-built sample trip (London → Lisbon, $4,000 USD, 7 days) with **no API key required**.
 4. Explore all three screens:
    - **Step 1 — Form**: budget, dates, activity preferences, travel style
-   - **Step 2 — Destinations**: 5 destination cards + interactive budget allocation pie chart
+   - **Step 2 — Destinations**: 5 destination cards + interactive budget allocation pie chart + "Check live prices" buttons (requires Python setup, see below)
    - **Step 3 — Itinerary**: click "📋 Plan Itinerary" on Lisbon → full 7-day day-by-day plan
 5. Switch between the four tabs on the itinerary screen (Itinerary · Attractions · Food · Tips).
 6. Open the **chat bubble** (bottom-right) — the AI assistant is context-aware of your current destination.
 
-### Option B — Live AI mode (with Groq API key)
+### Option B — Live AI mode (with OpenRouter API key)
 
 ```bash
 cp .env.local.example .env.local
-# Edit .env.local and add your GROQ_API_KEY
-# Get a free key at https://console.groq.com (takes < 1 minute)
+# Edit .env.local and add your OPENROUTER_API_KEY
+# Get a free key at https://openrouter.ai/keys (takes < 1 minute)
 npm run dev
 ```
 
@@ -35,19 +35,7 @@ Fill in the form with your own trip details and click **"✈️ Find My Perfect 
 
 ---
 
-## Screenshots
-
-| Step 1 — Trip Planning Form | Step 2 — Destination Matches |
-|---|---|
-| ![Form](https://github.com/user-attachments/assets/460b9c42-2af0-47f1-9abf-47dcb0bcb969) | ![Destinations](https://github.com/user-attachments/assets/9477f3af-d009-4035-af93-b8c81d0a1975) |
-
-| Step 3 — Itinerary (Attractions tab) | Step 3 — Food tab + Chat agent |
-|---|---|
-| ![Attractions](https://github.com/user-attachments/assets/644b1747-551b-4074-b14a-3e479e987bb4) | ![Food + Chat](https://github.com/user-attachments/assets/a770a120-ea18-487a-bbb8-8406cedad21e) |
-
----
-
-## What's implemented
+## Features
 
 ### 1. Smart Trip Planning Form
 - **Budget** with currency selection (USD, EUR, GBP, SGD, AUD, CAD, JPY)
@@ -79,14 +67,18 @@ Fill in the form with your own trip details and click **"✈️ Find My Perfect 
 - Optimal routing between locations
 - Practical tips tab
 
-### 5. AI Chat Assistant
-- Floating chat powered by **Llama 3** (via Groq — free, open-weight)
+### 5. Live Flight Prices (Google Flights)
+- Each destination card has a **"Check live prices"** button
+- Prices scraped from Google Flights via [fast-flights](https://github.com/AWeirdDev/flights) (no API key needed)
+- Shows airline, departure/arrival times, duration, stops, and per-person price
+- Highlights the "best" fare automatically
+- **Requires Python 3 + `pip install fast-flights`** (see setup below)
+
+### 6. AI Chat Assistant
+- Floating chat powered by any LLM on **OpenRouter** (100+ models, many free)
 - Aware of your trip context (budget, destination, preferences)
 - Streaming responses
 - Ask anything: local customs, visa info, safety tips, hidden gems
-
-### 6. Real Travel & Hotel Prices (Optional)
-- Integrates with **Amadeus API** (free test tier) for live flight and hotel prices
 
 ---
 
@@ -94,10 +86,12 @@ Fill in the form with your own trip details and click **"✈️ Find My Perfect 
 
 - **Framework**: Next.js 14 (App Router) + TypeScript
 - **Styling**: Tailwind CSS
-- **AI**: [Groq API](https://console.groq.com) — free, open-weight models (Llama 3.3 70B)
-- **Travel Data**: [Amadeus API](https://developers.amadeus.com) — free test environment
+- **AI**: [OpenRouter](https://openrouter.ai) — 100+ models, many free (default: Llama 3.3 70B)
+- **Flight prices**: [fast-flights](https://github.com/AWeirdDev/flights) — Google Flights scraper (Python, no API key)
 - **Charts**: Recharts
 - **Icons**: Lucide React
+
+---
 
 ## Getting Started
 
@@ -118,17 +112,24 @@ cp .env.local.example .env.local
 Edit `.env.local`:
 
 ```env
-# Required: AI Chat & Destination Suggestions
-# Get a free key at https://console.groq.com
-GROQ_API_KEY=your_groq_api_key_here
+# Required: AI features (destination suggestions, itinerary, chat)
+# Get a free key at https://openrouter.ai/keys
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 
-# Optional: Real flight & hotel prices
-# Get free test credentials at https://developers.amadeus.com
-AMADEUS_CLIENT_ID=your_amadeus_client_id
-AMADEUS_CLIENT_SECRET=your_amadeus_client_secret
+# Optional: override the default model (Llama 3.3 70B free)
+# Any model from https://openrouter.ai/models works here
+# OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
 ```
 
-### 3. Run the development server
+### 3. Install Python dependencies (for live flight prices)
+
+```bash
+pip install fast-flights
+```
+
+> The app works fully without this — live prices just won't be fetched. The demo mode and AI features are unaffected.
+
+### 4. Run the development server
 
 ```bash
 npm run dev
@@ -136,12 +137,39 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## API Integrations
+---
 
-| API | Purpose | Cost |
-|-----|---------|------|
-| [Groq](https://console.groq.com) | AI destination suggestions, itinerary generation, chat assistant | **Free** (open-weight models) |
-| [Amadeus](https://developers.amadeus.com) | Flight & hotel price search | **Free** (test environment) |
+## How the Google Flights integration works
+
+Flight prices are fetched by `scripts/google_flights.py`, a thin wrapper around the [fast-flights](https://github.com/AWeirdDev/flights) Python library.
+
+**How fast-flights works:**
+1. Encodes your query (origin/destination airports, dates, passengers) as a Protobuf binary
+2. Base64-encodes it into the `tfs` URL parameter that Google Flights uses
+3. Fetches `https://www.google.com/travel/flights?tfs=<encoded_query>` while impersonating a Chrome browser (TLS fingerprinting via `primp`)
+4. Parses the HTML response to extract flight cards: airline, price, duration, stops
+
+The Next.js `/api/prices` route spawns this Python script as a subprocess, captures its JSON output, and returns it to the browser. No Google API key is required.
+
+**IATA airport codes:** The app automatically maps common city names (e.g. "London" → `LHR`, "Paris" → `CDG`) to IATA codes. If your city isn't in the built-in list, the live-prices button won't appear for that card — you can add your city in `components/DestinationCard.tsx` → `CITY_TO_AIRPORT`.
+
+### Using the prices button
+
+On the destinations screen, each card shows a **"Check live prices (XXX → YYY)"** button once the app can infer both airport codes. Click it to fetch current Google Flights prices for those dates. Results are cached per card for the session.
+
+---
+
+## API
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/suggest` | POST | AI destination suggestions (OpenRouter) |
+| `/api/itinerary` | POST | AI day-by-day itinerary (OpenRouter) |
+| `/api/chat` | POST | Streaming AI chat (OpenRouter) |
+| `/api/prices` | GET | Live flight prices (Google Flights via Python) |
+| `/api/demo` | GET | Pre-seeded mock data (no API key needed) |
+
+---
 
 ## Project Structure
 
@@ -155,56 +183,34 @@ travel-planner/
 │       ├── suggest/          # POST /api/suggest — AI destination suggestions
 │       ├── itinerary/        # POST /api/itinerary — AI itinerary generation
 │       ├── chat/             # POST /api/chat — Streaming AI chat
-│       ├── prices/           # GET /api/prices — Amadeus flight & hotel prices
-│       └── demo/             # GET /api/demo — Pre-seeded mock data (no key needed)
+│       ├── prices/           # GET /api/prices — Google Flights scraper
+│       └── demo/             # GET /api/demo — Pre-seeded mock data
 ├── components/
 │   ├── TripPlannerForm.tsx   # Trip planning input form
-│   ├── DestinationCard.tsx   # Destination suggestion card
+│   ├── DestinationCard.tsx   # Destination card + live prices button
 │   ├── BudgetSlider.tsx      # Budget allocation with pie chart
 │   ├── ItineraryView.tsx     # Day-by-day itinerary display
 │   └── ChatAgent.tsx         # Floating AI chat window
-└── lib/
-    ├── types.ts              # TypeScript types
-    ├── groq.ts               # Groq API client
-    ├── prompts.ts            # AI prompt templates
-    └── mockData.ts           # Demo data (London → Lisbon, 7 days)
+├── lib/
+│   ├── types.ts              # TypeScript types
+│   ├── openrouter.ts         # OpenRouter AI client (replaces groq.ts)
+│   ├── prompts.ts            # AI prompt templates
+│   └── mockData.ts           # Demo data (London → Lisbon, 7 days)
+└── scripts/
+    └── google_flights.py     # Python wrapper around fast-flights
 ```
 
 ---
 
 ## Next Steps
 
-The following enhancements would make this production-ready. They are roughly ordered by priority.
-
-### 🗺️ 1. Interactive map (high priority)
-Leaflet and React-Leaflet are already installed — add a map view on the itinerary screen that plots the day's route, pins each attraction, and draws the optimal walking/transit path between stops. The `route` array in each itinerary already carries from/to/mode data ready for rendering.
-
-### 🔐 2. User accounts & saved trips
-Add authentication (Clerk or NextAuth) so users can save trips, revisit itineraries, and build a collection of past and planned journeys. Pair with a lightweight database (Vercel Postgres / Supabase) to persist trip data.
-
-### 💰 3. Live price data — flights & hotels
-The Amadeus `/api/prices` route is wired but needs real IATA city codes. Add a city-code lookup step (Amadeus Location API) to translate "London" → "LON" automatically. Surface the cheapest flight + hotel combinations directly on each destination card.
-
-### 📅 4. Flexible date picker with price heatmap
-Replace the plain date inputs with a calendar that highlights the cheapest available weeks within the user's flexibility window (using Amadeus or Google Flights data). This directly delivers the "rough dates → best value" goal from the original spec.
-
-### 🌍 5. Review & content integration
-Pull in real-world ratings and photos to enrich each destination and attraction card:
-- **TripAdvisor API** (or community-maintained scrapers) — ratings, photos, review summaries
-- **Wikivoyage** / **OpenTripMap** — free, open-licensed descriptions & POI data
-- **Unsplash API** — free destination photos keyed to the `imageQuery` field already in every `Destination` object
-
-### 🧳 6. Packing list generator
-After the itinerary is finalised, have the AI generate a context-aware packing list (climate, activities, trip duration, number of days in transit). Exportable to a checklist.
-
-### 💬 7. Richer chat — multi-turn trip refinement
-Let users refine itinerary details through the chat (e.g. "swap Day 3 afternoon for a cooking class", "I'd prefer a cheaper lunch option on Day 5"). Have the AI return a structured diff that updates the itinerary in-place.
-
-### 🌤️ 8. Weather forecasts
-Integrate Open-Meteo (free, no key required) to show the forecast for the travel dates on each destination card and inside the itinerary.
-
-### 🚀 9. One-click deployment to Vercel
-Add a `vercel.json` config and a **Deploy to Vercel** button in the README so the app can be stood up with a single click. Vercel's environment variable UI makes it easy to add `GROQ_API_KEY` post-deploy.
-
-### 📱 10. Progressive Web App (PWA)
-Add a `manifest.json` and service worker so the itinerary is accessible offline — useful for travellers without roaming data.
+1. **🗺️ Interactive map** — Leaflet is already installed; `route[]` array in itinerary ready for rendering
+2. **🔐 User accounts + saved trips** — Clerk/NextAuth + Vercel Postgres
+3. **📅 Flexible date picker with price heatmap** — cheapest weeks within user's flexibility window
+4. **🌍 Review & photo integration** — TripAdvisor, OpenTripMap, Unsplash (`imageQuery` field already on every `Destination`)
+5. **🧳 Packing list generator** — AI-generated, context-aware, exportable
+6. **💬 In-place itinerary editing via chat** — structured diff from AI updates itinerary without full regeneration
+7. **🌤️ Weather forecasts** — Open-Meteo (free, no key)
+8. **🚀 One-click Vercel deploy** — `vercel.json` + Deploy button (note: Python subprocess won't run on Vercel Edge; use a separate Python service or Vercel Python runtime)
+9. **📱 PWA / offline** — service worker for offline itinerary access
+10. **🏨 Hotel prices** — extend `scripts/google_flights.py` or add a hotels endpoint using a free scraping approach

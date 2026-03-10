@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import TripPlannerForm from "@/components/TripPlannerForm";
 import DestinationCard from "@/components/DestinationCard";
 import BudgetSlider from "@/components/BudgetSlider";
 import ItineraryView from "@/components/ItineraryView";
 import ChatAgent from "@/components/ChatAgent";
 import { TripPlannerInput, Destination, BudgetSplit, TripItinerary } from "@/lib/types";
+import { cityToAirport } from "@/lib/airports";
 import { ArrowLeft, MapPin, Sparkles, PlayCircle } from "lucide-react";
 
 type AppStep = "form" | "destinations" | "itinerary";
@@ -32,6 +33,12 @@ export default function Home() {
   const [isLoadingDestinations, setIsLoadingDestinations] = useState(false);
   const [isLoadingItinerary, setIsLoadingItinerary] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Derive origin airport from the home city
+  const originAirport = useMemo(
+    () => (tripInput ? cityToAirport(tripInput.homeCity) : undefined),
+    [tripInput]
+  );
 
   const [isLoadingDemo, setIsLoadingDemo] = useState(false);
 
@@ -195,11 +202,11 @@ export default function Home() {
             <span className="text-red-500 font-bold">⚠</span>
             <div>
               <strong>Error: </strong>{error}
-              {error.includes("GROQ_API_KEY") && (
+              {error.includes("OPENROUTER_API_KEY") && (
                 <p className="mt-1 text-xs text-red-600">
-                  Please set the GROQ_API_KEY environment variable. Get a free key at{" "}
-                  <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" className="underline">
-                    console.groq.com
+                  Please set the OPENROUTER_API_KEY environment variable. Get a free key at{" "}
+                  <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="underline">
+                    openrouter.ai/keys
                   </a>
                 </p>
               )}
@@ -283,6 +290,11 @@ export default function Home() {
                   onSelect={toggleDestinationSelection}
                   onGenerateItinerary={handleGenerateItinerary}
                   rank={i + 1}
+                  originAirport={originAirport}
+                  departureDate={tripInput.startDate || undefined}
+                  returnDate={tripInput.endDate || undefined}
+                  adults={tripInput.travelers}
+                  currency={tripInput.currency}
                 />
               ))}
             </div>

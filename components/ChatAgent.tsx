@@ -97,7 +97,7 @@ export default function ChatAgent({ tripContext, destination }: ChatAgentProps) 
         ...prev,
         {
           role: "assistant",
-          content: "Sorry, I encountered an error. Please check that the GROQ_API_KEY is configured correctly.",
+          content: "Sorry, I encountered an error. Please check that the OPENROUTER_API_KEY is configured correctly.",
           timestamp: new Date(),
         },
       ]);

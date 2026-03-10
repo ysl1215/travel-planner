@@ -118,10 +118,13 @@ export interface FlightOffer {
   destination: string;
   departureDate: string;
   returnDate?: string;
+  departureTime?: string;
+  arrivalTime?: string;
   price: number;
   currency: string;
   duration: string;
   stops: number;
+  isBest?: boolean;
 }
 
 export interface HotelOffer {

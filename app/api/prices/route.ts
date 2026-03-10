@@ -1,199 +1,174 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FlightOffer, HotelOffer } from "@/lib/types";
+import { spawn } from "child_process";
+import path from "path";
+import { FlightOffer } from "@/lib/types";
 
-// Amadeus API free test environment
-const AMADEUS_API_BASE = "https://test.api.amadeus.com/v2";
-const AMADEUS_AUTH_BASE = "https://test.api.amadeus.com/v1";
-
-let amadeusToken: string | null = null;
-let tokenExpiry: number = 0;
-
-async function getAmadeusToken(): Promise<string> {
-  if (amadeusToken && Date.now() < tokenExpiry) {
-    return amadeusToken;
-  }
-
-  const clientId = process.env.AMADEUS_CLIENT_ID;
-  const clientSecret = process.env.AMADEUS_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Amadeus API credentials not configured");
-  }
-
-  const response = await fetch(`${AMADEUS_AUTH_BASE}/security/oauth2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to authenticate with Amadeus API");
-  }
-
-  const data = await response.json();
-  amadeusToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-  return amadeusToken!;
-}
-
-async function searchFlights(
-  originCode: string,
-  destinationCode: string,
-  departureDate: string,
-  returnDate: string,
-  adults: number
-): Promise<FlightOffer[]> {
-  const token = await getAmadeusToken();
-
-  const params = new URLSearchParams({
-    originLocationCode: originCode,
-    destinationLocationCode: destinationCode,
-    departureDate,
-    returnDate,
-    adults: String(adults),
-    max: "5",
-    currencyCode: "USD",
-  });
-
-  const response = await fetch(
-    `${AMADEUS_API_BASE}/shopping/flight-offers?${params}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!response.ok) {
-    console.error("Flight search failed:", await response.text());
-    return [];
-  }
-
-  const data = await response.json();
-  return (data.data ?? []).map((offer: Record<string, unknown>) => {
-    const itinerary = (offer.itineraries as Record<string, unknown>[])?.[0];
-    const segments = (itinerary?.segments as Record<string, unknown>[]) ?? [];
-    const firstSeg = segments[0] ?? {};
-    const lastSeg = segments[segments.length - 1] ?? {};
-    const departure = firstSeg.departure as Record<string, string> | undefined;
-    const arrival = lastSeg.arrival as Record<string, string> | undefined;
-
-    return {
-      airline: String((offer.validatingAirlineCodes as string[])?.[0] ?? ""),
-      origin: String(departure?.iataCode ?? originCode),
-      destination: String(arrival?.iataCode ?? destinationCode),
-      departureDate: String(departure?.at ?? departureDate).split("T")[0],
-      returnDate,
-      price: parseFloat(String((offer.price as Record<string, string>)?.total ?? "0")),
-      currency: "USD",
-      duration: String(itinerary?.duration ?? ""),
-      stops: segments.length - 1,
-    } as FlightOffer;
-  });
-}
-
-async function searchHotels(
-  cityCode: string,
-  checkIn: string,
-  checkOut: string,
-  adults: number
-): Promise<HotelOffer[]> {
-  const token = await getAmadeusToken();
-
-  // First get hotel list
-  const hotelParams = new URLSearchParams({
-    cityCode,
-    radius: "5",
-    radiusUnit: "KM",
-    hotelSource: "ALL",
-  });
-
-  const hotelListRes = await fetch(
-    `${AMADEUS_AUTH_BASE}/reference-data/locations/hotels/by-city?${hotelParams}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!hotelListRes.ok) {
-    console.error("Hotel list failed:", await hotelListRes.text());
-    return [];
-  }
-
-  const hotelList = await hotelListRes.json();
-  const hotelIds = ((hotelList.data ?? []) as Record<string, unknown>[])
-    .slice(0, 10)
-    .map((h) => String(h.hotelId))
-    .join(",");
-
-  if (!hotelIds) return [];
-
-  // Search hotel offers
-  const offerParams = new URLSearchParams({
-    hotelIds,
-    checkInDate: checkIn,
-    checkOutDate: checkOut,
-    adults: String(adults),
-    currency: "USD",
-    bestRateOnly: "true",
-  });
-
-  const offersRes = await fetch(
-    `${AMADEUS_API_BASE}/shopping/hotel-offers?${offerParams}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!offersRes.ok) {
-    console.error("Hotel offers failed:", await offersRes.text());
-    return [];
-  }
-
-  const offersData = await offersRes.json();
-  return ((offersData.data ?? []) as Record<string, unknown>[]).map((item) => {
-    const hotel = item.hotel as Record<string, unknown>;
-    const offers = item.offers as Record<string, unknown>[];
-    const firstOffer = offers?.[0] ?? {};
-    const price = firstOffer.price as Record<string, string> | undefined;
-
-    return {
-      name: String(hotel?.name ?? "Unknown Hotel"),
-      rating: Number(hotel?.rating ?? 0),
-      location: String(hotel?.cityCode ?? cityCode),
-      pricePerNight: parseFloat(String(price?.total ?? "0")),
-      currency: "USD",
-      amenities: [],
-    } as HotelOffer;
-  });
-}
-
+/**
+ * GET /api/prices
+ *
+ * Scrapes live flight prices from Google Flights using the
+ * fast-flights Python library (https://github.com/AWeirdDev/flights).
+ *
+ * Required query params:
+ *   origin      — IATA airport code, e.g. LHR
+ *   destination — IATA airport code, e.g. LIS
+ *   departure   — YYYY-MM-DD
+ *
+ * Optional:
+ *   return      — YYYY-MM-DD (omit for one-way)
+ *   adults      — integer, default 1
+ *   seat        — economy | premium-economy | business | first
+ *   currency    — e.g. USD (default)
+ *
+ * Prerequisites (server-side only):
+ *   pip install fast-flights
+ */
 export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const originCode = searchParams.get("origin") ?? "";
-    const destinationCode = searchParams.get("destination") ?? "";
-    const departureDate = searchParams.get("departure") ?? "";
-    const returnDate = searchParams.get("return") ?? "";
-    const adults = parseInt(searchParams.get("adults") ?? "1", 10);
+  const { searchParams } = new URL(request.url);
 
-    if (!originCode || !destinationCode || !departureDate) {
+  const origin = searchParams.get("origin")?.toUpperCase() ?? "";
+  const destination = searchParams.get("destination")?.toUpperCase() ?? "";
+  const departure = searchParams.get("departure") ?? "";
+  const returnDate = searchParams.get("return") ?? "";
+  const adults = searchParams.get("adults") ?? "1";
+  const seat = searchParams.get("seat") ?? "economy";
+  const currency = searchParams.get("currency") ?? "USD";
+
+  if (!origin || !destination || !departure) {
+    return NextResponse.json(
+      { error: "Missing required params: origin, destination, departure" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const result = await runFlightScript({
+      origin,
+      destination,
+      departure,
+      returnDate: returnDate || undefined,
+      adults: parseInt(adults, 10),
+      seat: seat as "economy" | "premium-economy" | "business" | "first",
+      currency,
+    });
+
+    if (result.error && !result.flights.length) {
       return NextResponse.json(
-        { error: "Missing required params: origin, destination, departure" },
-        { status: 400 }
+        { error: result.error, flights: [] },
+        { status: 502 }
       );
     }
 
-    const [flights, hotels] = await Promise.allSettled([
-      searchFlights(originCode, destinationCode, departureDate, returnDate, adults),
-      searchHotels(destinationCode, departureDate, returnDate, adults),
-    ]);
+    const flights: FlightOffer[] = result.flights.map((f) => ({
+      airline: f.airline,
+      origin: f.origin,
+      destination: f.destination,
+      departureDate: f.departure_date,
+      returnDate: f.return_date ?? "",
+      departureTime: f.departure_time,
+      arrivalTime: f.arrival_time,
+      price: f.price,
+      currency: f.currency,
+      duration: f.duration,
+      stops: typeof f.stops === "number" ? f.stops : 0,
+      isBest: f.is_best ?? false,
+    }));
 
     return NextResponse.json({
-      flights: flights.status === "fulfilled" ? flights.value : [],
-      hotels: hotels.status === "fulfilled" ? hotels.value : [],
-      flightError: flights.status === "rejected" ? String(flights.reason) : null,
-      hotelError: hotels.status === "rejected" ? String(hotels.reason) : null,
+      flights,
+      currentPriceLevel: result.current_price_level,
+      error: result.error ?? null,
     });
-  } catch (error) {
-    console.error("Error fetching prices:", error);
-    const message = error instanceof Error ? error.message : "Failed to fetch prices";
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (err) {
+    console.error("Prices API error:", err);
+    const message = err instanceof Error ? err.message : "Failed to fetch prices";
+    return NextResponse.json({ error: message, flights: [] }, { status: 500 });
   }
+}
+
+// ─── Python subprocess helper ────────────────────────────────────────────────
+
+interface ScriptArgs {
+  origin: string;
+  destination: string;
+  departure: string;
+  returnDate?: string;
+  adults: number;
+  seat: "economy" | "premium-economy" | "business" | "first";
+  currency: string;
+}
+
+interface ScriptFlight {
+  airline: string;
+  origin: string;
+  destination: string;
+  departure_date: string;
+  return_date: string | null;
+  departure_time: string;
+  arrival_time: string;
+  duration: string;
+  stops: number | string;
+  delay: string | null;
+  price: number;
+  currency: string;
+  is_best: boolean;
+}
+
+interface ScriptResult {
+  flights: ScriptFlight[];
+  current_price_level: string;
+  error: string | null;
+}
+
+function runFlightScript(args: ScriptArgs): Promise<ScriptResult> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(process.cwd(), "scripts", "google_flights.py");
+
+    const pyArgs = [
+      scriptPath,
+      "--origin", args.origin,
+      "--destination", args.destination,
+      "--departure", args.departure,
+      "--adults", String(args.adults),
+      "--seat", args.seat,
+      "--currency", args.currency,
+    ];
+
+    if (args.returnDate) {
+      pyArgs.push("--return", args.returnDate);
+    }
+
+    const py = spawn("python3", pyArgs, {
+      timeout: 15_000, // 15-second timeout
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    py.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    py.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    py.on("close", (code) => {
+      if (!stdout.trim()) {
+        reject(
+          new Error(
+            `google_flights.py produced no output (exit ${code}). ` +
+            `Are Python 3 and fast-flights installed? stderr: ${stderr.slice(0, 200)}`
+          )
+        );
+        return;
+      }
+
+      try {
+        const parsed: ScriptResult = JSON.parse(stdout.trim());
+        resolve(parsed);
+      } catch {
+        reject(new Error(`Failed to parse script output as JSON: ${stdout.slice(0, 200)}`));
+      }
+    });
+
+    py.on("error", (err) => {
+      reject(new Error(`Failed to spawn python3: ${err.message}. Make sure Python 3 is installed.`));
+    });
+  });
 }

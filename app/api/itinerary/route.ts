@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateWithGroq } from "@/lib/groq";
+import { generateWithOpenRouter } from "@/lib/openrouter";
 import { buildItineraryPrompt } from "@/lib/prompts";
 import { TripPlannerInput, TripItinerary } from "@/lib/types";
 
@@ -29,10 +29,9 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = buildItineraryPrompt(destination, input, budgetSplit);
-    const raw = await generateWithGroq(
+    const raw = await generateWithOpenRouter(
       "You are an expert travel planner with deep local knowledge. Always respond with valid JSON only.",
-      prompt,
-      "llama-3.3-70b-versatile"
+      prompt
     );
 
     // Extract JSON from the response

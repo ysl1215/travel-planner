@@ -1,7 +1,9 @@
 "use client";
 
-import { Destination } from "@/lib/types";
-import { Globe, Clock, TrendingUp, Star, CheckCircle } from "lucide-react";
+import { useState } from "react";
+import { Destination, FlightOffer } from "@/lib/types";
+import { cityToAirport } from "@/lib/airports";
+import { Globe, Clock, TrendingUp, CheckCircle, Plane, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 
 interface DestinationCardProps {
   destination: Destination;
@@ -9,6 +11,16 @@ interface DestinationCardProps {
   onSelect: (id: string) => void;
   onGenerateItinerary: (destination: Destination) => void;
   rank: number;
+  /** IATA airport codes for the departure city (e.g. "LHR") */
+  originAirport?: string;
+  /** Departure date YYYY-MM-DD */
+  departureDate?: string;
+  /** Return date YYYY-MM-DD (optional – omit for one-way price check) */
+  returnDate?: string;
+  /** Number of adults */
+  adults?: number;
+  /** Currency */
+  currency?: string;
 }
 
 const budgetFitColors = {
@@ -23,13 +35,69 @@ const budgetFitLabels = {
   stretch: "Bit of a stretch",
 };
 
+
 export default function DestinationCard({
   destination,
   isSelected,
   onSelect,
   onGenerateItinerary,
   rank,
+  originAirport,
+  departureDate,
+  returnDate,
+  adults = 1,
+  currency = "USD",
 }: DestinationCardProps) {
+  const [priceData, setPriceData] = useState<{
+    flights: FlightOffer[];
+    priceLevel: string;
+    error: string | null;
+  } | null>(null);
+  const [loadingPrices, setLoadingPrices] = useState(false);
+  const [showPrices, setShowPrices] = useState(false);
+
+  // Derive destination airport code
+  const destAirport = cityToAirport(destination.city);
+
+  const canFetchPrices = !!(originAirport && destAirport && departureDate);
+
+  const handleFetchPrices = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (priceData) {
+      setShowPrices((v) => !v);
+      return;
+    }
+    setLoadingPrices(true);
+    setShowPrices(true);
+    try {
+      const params = new URLSearchParams({
+        origin: originAirport!,
+        destination: destAirport!,
+        departure: departureDate!,
+        adults: String(adults),
+        currency,
+      });
+      if (returnDate) params.set("return", returnDate);
+
+      const res = await fetch(`/api/prices?${params}`);
+      const data = await res.json();
+
+      setPriceData({
+        flights: data.flights ?? [],
+        priceLevel: data.currentPriceLevel ?? "",
+        error: data.error ?? null,
+      });
+    } catch (err) {
+      setPriceData({
+        flights: [],
+        priceLevel: "",
+        error: err instanceof Error ? err.message : "Failed to fetch prices",
+      });
+    } finally {
+      setLoadingPrices(false);
+    }
+  };
+
   return (
     <div
       className={`bg-white rounded-2xl shadow-sm border-2 transition-all cursor-pointer hover:shadow-md ${
@@ -110,6 +178,79 @@ export default function DestinationCard({
             ))}
           </div>
         </div>
+
+        {/* Live Flight Prices */}
+        {canFetchPrices && (
+          <div className="mb-4">
+            <button
+              onClick={handleFetchPrices}
+              className="w-full flex items-center justify-between text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 hover:bg-sky-100 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                {loadingPrices ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Plane className="w-3.5 h-3.5" />
+                )}
+                {loadingPrices
+                  ? "Fetching live prices…"
+                  : priceData
+                  ? `Live prices (${originAirport} → ${destAirport})`
+                  : `Check live prices (${originAirport} → ${destAirport})`}
+              </span>
+              {priceData && !loadingPrices && (
+                showPrices ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+
+            {showPrices && priceData && (
+              <div className="mt-2 space-y-1.5">
+                {priceData.error && (
+                  <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                    ⚠ {priceData.error}
+                  </p>
+                )}
+                {priceData.priceLevel && (
+                  <p className="text-xs text-gray-500 px-1">
+                    Price level: <span className="font-medium">{priceData.priceLevel}</span>
+                  </p>
+                )}
+                {priceData.flights.slice(0, 4).map((f, i) => (
+                  <div
+                    key={i}
+                    className={`text-xs rounded-xl px-3 py-2 border ${
+                      f.isBest ? "bg-emerald-50 border-emerald-200" : "bg-gray-50 border-gray-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-800">{f.airline}</span>
+                      <span className="font-bold text-gray-900">
+                        {currency} {f.price > 0 ? f.price.toLocaleString() : "—"}
+                      </span>
+                    </div>
+                    <div className="text-gray-500 mt-0.5">
+                      {f.departureTime && f.arrivalTime
+                        ? `${f.departureTime} → ${f.arrivalTime} · `
+                        : ""}
+                      {f.duration}
+                      {typeof f.stops === "number" && (
+                        <span className="ml-1.5">
+                          · {f.stops === 0 ? "nonstop" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}
+                        </span>
+                      )}
+                      {f.isBest && (
+                        <span className="ml-1.5 text-emerald-600 font-medium">★ Best</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {priceData.flights.length === 0 && !priceData.error && (
+                  <p className="text-xs text-gray-500 px-1">No flights found for these dates.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-2 mt-4">

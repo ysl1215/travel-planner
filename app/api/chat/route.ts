@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { streamWithGroq } from "@/lib/groq";
+import { streamWithOpenRouter } from "@/lib/openrouter";
 import { buildChatSystemPrompt } from "@/lib/prompts";
 import { TripPlannerInput } from "@/lib/types";
 
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = buildChatSystemPrompt(tripContext ?? null, destination);
 
-    const stream = await streamWithGroq([
+    const stream = await streamWithOpenRouter([
       { role: "system", content: systemPrompt },
       ...messages,
     ]);
