@@ -1,99 +1,59 @@
 # ✈️ Travel Planner AI
 
-An AI-powered travel planner that creates personalized destination suggestions and detailed itineraries based on your budget, dates, travel preferences, and style.
+[![CI](https://github.com/ysl1215/travel-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/ysl1215/travel-planner/actions/workflows/ci.yml)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fysl1215%2Ftravel-planner&env=OPENROUTER_API_KEY&envDescription=Get%20a%20free%20key%20at%20openrouter.ai%2Fkeys&envLink=https%3A%2F%2Fopenrouter.ai%2Fkeys&project-name=travel-planner-ai&repository-name=travel-planner-ai)
 
-## How to check the output right now
+An AI-powered travel planner that creates personalized destination suggestions and detailed day-by-day itineraries based on your budget, dates, travel preferences, and style.
 
-### Option A — Demo mode (no API key needed)
+---
 
-1. Clone and install:
-   ```bash
-   git clone https://github.com/ysl1215/travel-planner.git
-   cd travel-planner
-   npm install
-   npm run dev
-   ```
-2. Open **http://localhost:3000** in your browser.
-3. Click the **"Try Demo ▶"** button on the landing page — it instantly loads a pre-built sample trip (London → Lisbon, $4,000 USD, 7 days) with **no API key required**.
-4. Explore all three screens:
-   - **Step 1 — Form**: budget, dates, activity preferences, travel style
-   - **Step 2 — Destinations**: 5 destination cards + interactive budget allocation pie chart + "Check live prices" buttons (requires Python setup, see below)
-   - **Step 3 — Itinerary**: click "📋 Plan Itinerary" on Lisbon → full 7-day day-by-day plan
-5. Switch between the four tabs on the itinerary screen (Itinerary · Attractions · Food · Tips).
-6. Open the **chat bubble** (bottom-right) — the AI assistant is context-aware of your current destination.
+## 🚀 Deploy in 2 minutes (Vercel — free)
 
-### Option B — Live AI mode (with OpenRouter API key)
+> **Why not GitHub Pages?** GitHub Pages is static-only — it can't run the server-side Next.js API routes that power the AI features and demo mode. Vercel is the right home for full-stack Next.js apps and has a free tier.
+
+### Option 1 — One-click deploy (fastest)
+
+Click the button above **"Deploy with Vercel"**, then:
+1. Vercel clones the repo to your GitHub account
+2. Enter your `OPENROUTER_API_KEY` when prompted ([get a free key →](https://openrouter.ai/keys))
+3. Click **Deploy** — your app is live in ~60 seconds at `https://your-app.vercel.app`
+
+### Option 2 — Connect your existing repo to Vercel
+
+1. Push this code to your own GitHub repository (if not already there)
+2. Go to [vercel.com/new](https://vercel.com/new) and click **"Import Git Repository"**
+3. Select your repo and click **Import**
+4. Under **Environment Variables**, add:
+   | Variable | Value |
+   |---|---|
+   | `OPENROUTER_API_KEY` | Your key from [openrouter.ai/keys](https://openrouter.ai/keys) |
+5. Click **Deploy** — done! Every push to `main` auto-deploys
+
+### Option 3 — Vercel CLI (from your terminal)
 
 ```bash
-cp .env.local.example .env.local
-# Edit .env.local and add your OPENROUTER_API_KEY
-# Get a free key at https://openrouter.ai/keys (takes < 1 minute)
-npm run dev
+npm install -g vercel
+vercel login
+vercel deploy
+# When prompted, paste your OPENROUTER_API_KEY
 ```
 
-Fill in the form with your own trip details and click **"✈️ Find My Perfect Destinations"** to get real AI-generated suggestions and itineraries.
+### Option 4 — Self-host (for full flight-price scraping)
+
+Vercel serverless functions can't spawn Python subprocesses, so the live flight prices button won't work there. If you want the full experience including Google Flights prices:
+
+```bash
+# Railway / Render / Fly.io (all have free tiers)
+# 1. Create a new Web Service pointed at this repo
+# 2. Set build command:  npm install && pip install fast-flights && npm run build
+# 3. Set start command:  npm run start
+# 4. Add OPENROUTER_API_KEY as environment variable
+# 5. Deploy
+```
 
 ---
 
-## Features
-
-### 1. Smart Trip Planning Form
-- **Budget** with currency selection (USD, EUR, GBP, SGD, AUD, CAD, JPY)
-- **Home city** — where you're travelling from
-- **Rough dates** with flexibility slider (±0–14 days) to maximise value for money
-- **Number of travellers**
-- **Activity preferences** — activities you love & want to de-prioritise
-- **Travel mode** — Flight, Train, Rental Car, Bus, Cruise
-- **Travel style** — Budget Backpacker to Luxury
-- **Optional**: preferred country/region, max travel time from home
-
-### 2. AI Destination Suggestions
-- 4–6 destination recommendations tailored to your budget & preferences
-- Budget fit rating (Excellent / Good / Stretch)
-- Highlights and vibe match tags
-- Estimated flight time from home city
-- Best time to visit
-
-### 3. Budget Allocation Slider
-- Interactive budget split across Travel, Accommodation, Food, Activities, Misc
-- Pie chart visualisation with real-time updates
-- Proportional redistribution as you drag any slider
-
-### 4. Day-by-Day Itinerary
-- Full day-by-day schedule (morning / afternoon / evening)
-- Mix of top tourist attractions + local, off-the-beaten-path activities
-- Wait times flagged for popular attractions
-- Food & eatery recommendations (no tourist traps!)
-- Optimal routing between locations
-- Practical tips tab
-
-### 5. Live Flight Prices (Google Flights)
-- Each destination card has a **"Check live prices"** button
-- Prices scraped from Google Flights via [fast-flights](https://github.com/AWeirdDev/flights) (no API key needed)
-- Shows airline, departure/arrival times, duration, stops, and per-person price
-- Highlights the "best" fare automatically
-- **Requires Python 3 + `pip install fast-flights`** (see setup below)
-
-### 6. AI Chat Assistant
-- Floating chat powered by any LLM on **OpenRouter** (100+ models, many free)
-- Aware of your trip context (budget, destination, preferences)
-- Streaming responses
-- Ask anything: local customs, visa info, safety tips, hidden gems
-
----
-
-## Tech Stack
-
-- **Framework**: Next.js 14 (App Router) + TypeScript
-- **Styling**: Tailwind CSS
-- **AI**: [OpenRouter](https://openrouter.ai) — 100+ models, many free (default: Llama 3.3 70B)
-- **Flight prices**: [fast-flights](https://github.com/AWeirdDev/flights) — Google Flights scraper (Python, no API key)
-- **Charts**: Recharts
-- **Icons**: Lucide React
-
----
-
-## Getting Started
+## 🏠 Run locally
 
 ### 1. Clone and install
 
@@ -107,29 +67,18 @@ npm install
 
 ```bash
 cp .env.local.example .env.local
+# Edit .env.local and add your OPENROUTER_API_KEY
+# Get a free key at https://openrouter.ai/keys (no credit card needed)
 ```
 
-Edit `.env.local`:
-
-```env
-# Required: AI features (destination suggestions, itinerary, chat)
-# Get a free key at https://openrouter.ai/keys
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-
-# Optional: override the default model (Llama 3.3 70B free)
-# Any model from https://openrouter.ai/models works here
-# OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
-```
-
-### 3. Install Python dependencies (for live flight prices)
+### 3. (Optional) Install Python for live flight prices
 
 ```bash
 pip install fast-flights
+# Without this, the "Check live prices" button shows an error — everything else works fine.
 ```
 
-> The app works fully without this — live prices just won't be fetched. The demo mode and AI features are unaffected.
-
-### 4. Run the development server
+### 4. Start the dev server
 
 ```bash
 npm run dev
@@ -139,78 +88,157 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## How the Google Flights integration works
+## ▶️ Try the demo (no API key needed)
 
-Flight prices are fetched by `scripts/google_flights.py`, a thin wrapper around the [fast-flights](https://github.com/AWeirdDev/flights) Python library.
-
-**How fast-flights works:**
-1. Encodes your query (origin/destination airports, dates, passengers) as a Protobuf binary
-2. Base64-encodes it into the `tfs` URL parameter that Google Flights uses
-3. Fetches `https://www.google.com/travel/flights?tfs=<encoded_query>` while impersonating a Chrome browser (TLS fingerprinting via `primp`)
-4. Parses the HTML response to extract flight cards: airline, price, duration, stops
-
-The Next.js `/api/prices` route spawns this Python script as a subprocess, captures its JSON output, and returns it to the browser. No Google API key is required.
-
-**IATA airport codes:** The app automatically maps common city names (e.g. "London" → `LHR`, "Paris" → `CDG`) to IATA codes. If your city isn't in the built-in list, the live-prices button won't appear for that card — you can add your city in `components/DestinationCard.tsx` → `CITY_TO_AIRPORT`.
-
-### Using the prices button
-
-On the destinations screen, each card shows a **"Check live prices (XXX → YYY)"** button once the app can infer both airport codes. Click it to fetch current Google Flights prices for those dates. Results are cached per card for the session.
+Click **"Try Demo"** on the landing page to load a pre-built sample trip (London → Lisbon, $4,000 USD, 7 days) with no setup required. You can explore all three screens:
+- **Step 1 — Form**: budget, dates, activity preferences, travel style
+- **Step 2 — Destinations**: 5 destination cards + live prices button + budget allocation chart
+- **Step 3 — Itinerary**: full 7-day day-by-day plan with tabs (Itinerary · Attractions · Food · Tips)
 
 ---
 
-## API
+## ✨ Features
 
-| Route | Method | Purpose |
+### 1. Smart Trip Planning Form
+- **Budget** with currency selection (USD, EUR, GBP, SGD, AUD, CAD, JPY)
+- **Home city** — where you're travelling from (auto-mapped to IATA airport code)
+- **Rough dates** with flexibility slider (±0–14 days) to find cheaper alternatives
+- **Number of travellers**
+- **Activity preferences** — activities you love & want to de-prioritise
+- **Travel mode** — Flight, Train, Rental Car, Bus, Cruise
+- **Travel style** — Budget Backpacker to Luxury
+- **Optional**: preferred country/region, max travel time from home
+
+### 2. AI Destination Suggestions
+- 4–6 personalized destinations tailored to your budget & preferences
+- Budget fit rating (Excellent / Good / Stretch)
+- Highlights and vibe match tags
+- Estimated flight hours from home city
+- Best time to visit
+
+### 3. Budget Allocation Slider
+- Interactive split across Travel, Accommodation, Food, Activities, Misc
+- Live pie chart updates as you drag
+- Proportional redistribution logic
+
+### 4. Day-by-Day Itinerary
+- Full schedule split into morning / afternoon / evening
+- Mix of top attractions + local, off-the-beaten-path experiences
+- Wait times flagged for popular sites
+- Food recommendations (no tourist traps!)
+- Optimal routing with transit tips
+- Four tabs: Itinerary · Attractions · Food · Practical Tips
+
+### 5. Live Flight Prices (Google Flights)
+- **"Check live prices"** button on each destination card
+- Scraped in real-time from Google Flights via [fast-flights](https://github.com/AWeirdDev/flights) — **no API key needed**
+- Shows airline, times, duration, stops, best-fare highlight
+- Requires Python 3 + `pip install fast-flights` on the server
+
+### 6. AI Chat Assistant
+- Floating chat powered by any LLM on [OpenRouter](https://openrouter.ai) (100+ models, many free)
+- Context-aware of your current destination and trip preferences
+- Streaming responses
+
+---
+
+## ⚙️ Automatic CI/CD (GitHub Actions)
+
+Two workflows are included in `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
 |---|---|---|
-| `/api/suggest` | POST | AI destination suggestions (OpenRouter) |
-| `/api/itinerary` | POST | AI day-by-day itinerary (OpenRouter) |
-| `/api/chat` | POST | Streaming AI chat (OpenRouter) |
-| `/api/prices` | GET | Live flight prices (Google Flights via Python) |
-| `/api/demo` | GET | Pre-seeded mock data (no API key needed) |
+| `ci.yml` | Every push & PR | Runs `npm run build` + `npm run lint` |
+| `deploy.yml` | Push to `main` + PRs | Deploys to Vercel (production/preview) |
+
+### Setting up automatic Vercel deploys from GitHub Actions
+
+If you want GitHub Actions to deploy to Vercel (instead of Vercel's native GitHub integration):
+
+1. Run `vercel link` in your project directory to create `.vercel/project.json`
+2. Add these **GitHub repository secrets** (Settings → Secrets and variables → Actions):
+
+   | Secret | Where to find it |
+   |---|---|
+   | `VERCEL_TOKEN` | [vercel.com/account/tokens](https://vercel.com/account/tokens) |
+   | `VERCEL_ORG_ID` | `.vercel/project.json` → `orgId` |
+   | `VERCEL_PROJECT_ID` | `.vercel/project.json` → `projectId` |
+
+3. Add `OPENROUTER_API_KEY` to your Vercel project's environment variables (Vercel dashboard → Settings → Environment Variables)
+
+> **Tip:** For most users, Vercel's native GitHub integration (Option 2 above) is simpler — Vercel auto-deploys on every push without any GitHub secrets needed.
 
 ---
 
-## Project Structure
+## 🏗️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router) + TypeScript |
+| Styling | Tailwind CSS v4 |
+| AI | [OpenRouter](https://openrouter.ai) — 100+ models, free tier (Llama 3.3 70B default) |
+| Flight prices | [fast-flights](https://github.com/AWeirdDev/flights) — Google Flights scraper (Python, no API key) |
+| Charts | Recharts |
+| Icons | Lucide React |
+| Deployment | Vercel (recommended) / Railway / Render |
+
+---
+
+## 📁 Project Structure
 
 ```
 travel-planner/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml          # Build + lint on every push/PR
+│       └── deploy.yml      # Auto-deploy to Vercel
 ├── app/
-│   ├── page.tsx              # Main app page (form → destinations → itinerary)
-│   ├── layout.tsx            # Root layout
-│   ├── globals.css           # Global styles
+│   ├── page.tsx            # Main app (form → destinations → itinerary)
+│   ├── layout.tsx
+│   ├── globals.css
 │   └── api/
-│       ├── suggest/          # POST /api/suggest — AI destination suggestions
-│       ├── itinerary/        # POST /api/itinerary — AI itinerary generation
-│       ├── chat/             # POST /api/chat — Streaming AI chat
-│       ├── prices/           # GET /api/prices — Google Flights scraper
-│       └── demo/             # GET /api/demo — Pre-seeded mock data
+│       ├── suggest/        # POST — AI destination suggestions
+│       ├── itinerary/      # POST — AI itinerary generation
+│       ├── chat/           # POST — Streaming AI chat
+│       ├── prices/         # GET  — Google Flights scraper (Python subprocess)
+│       └── demo/           # GET  — Pre-seeded mock data (no API key)
 ├── components/
-│   ├── TripPlannerForm.tsx   # Trip planning input form
-│   ├── DestinationCard.tsx   # Destination card + live prices button
-│   ├── BudgetSlider.tsx      # Budget allocation with pie chart
-│   ├── ItineraryView.tsx     # Day-by-day itinerary display
-│   └── ChatAgent.tsx         # Floating AI chat window
+│   ├── TripPlannerForm.tsx
+│   ├── DestinationCard.tsx # Includes live prices button
+│   ├── BudgetSlider.tsx
+│   ├── ItineraryView.tsx
+│   └── ChatAgent.tsx
 ├── lib/
-│   ├── types.ts              # TypeScript types
-│   ├── openrouter.ts         # OpenRouter AI client (replaces groq.ts)
-│   ├── prompts.ts            # AI prompt templates
-│   └── mockData.ts           # Demo data (London → Lisbon, 7 days)
-└── scripts/
-    └── google_flights.py     # Python wrapper around fast-flights
+│   ├── airports.ts         # City → IATA airport code mapping
+│   ├── openrouter.ts       # AI client (OpenRouter)
+│   ├── prompts.ts          # AI prompt templates
+│   ├── types.ts            # TypeScript types
+│   └── mockData.ts         # Demo data (London → Lisbon, 7 days)
+├── scripts/
+│   └── google_flights.py   # Python wrapper around fast-flights
+├── .env.local.example      # Copy to .env.local and fill in your key
+└── vercel.json             # Vercel build config
 ```
 
 ---
 
-## Next Steps
+## 🌐 Environment Variables
 
-1. **🗺️ Interactive map** — Leaflet is already installed; `route[]` array in itinerary ready for rendering
-2. **🔐 User accounts + saved trips** — Clerk/NextAuth + Vercel Postgres
-3. **📅 Flexible date picker with price heatmap** — cheapest weeks within user's flexibility window
-4. **🌍 Review & photo integration** — TripAdvisor, OpenTripMap, Unsplash (`imageQuery` field already on every `Destination`)
-5. **🧳 Packing list generator** — AI-generated, context-aware, exportable
-6. **💬 In-place itinerary editing via chat** — structured diff from AI updates itinerary without full regeneration
-7. **🌤️ Weather forecasts** — Open-Meteo (free, no key)
-8. **🚀 One-click Vercel deploy** — `vercel.json` + Deploy button (note: Python subprocess won't run on Vercel Edge; use a separate Python service or Vercel Python runtime)
-9. **📱 PWA / offline** — service worker for offline itinerary access
-10. **🏨 Hotel prices** — extend `scripts/google_flights.py` or add a hotels endpoint using a free scraping approach
+| Variable | Required | Description |
+|---|---|---|
+| `OPENROUTER_API_KEY` | **Yes** (for AI) | Free key from [openrouter.ai/keys](https://openrouter.ai/keys) |
+| `OPENROUTER_MODEL` | No | Override the AI model (default: `meta-llama/llama-3.3-70b-instruct:free`) |
+
+---
+
+## �� Next Steps
+
+1. **🗺️ Interactive map** — Leaflet + `route[]` array from itinerary for visual routing
+2. **📅 Flexible date price heatmap** — cheapest weeks within user's flexibility window
+3. **🌤️ Weather forecasts** — Open-Meteo (free, no key)
+4. **🌍 Destination photos** — Unsplash API (`imageQuery` field already on every `Destination`)
+5. **🧳 Packing list** — AI-generated, context-aware, export to PDF
+6. **🔐 User accounts + saved trips** — Clerk/NextAuth + Vercel Postgres
+7. **🏨 Hotel prices** — extend `scripts/google_flights.py` or add a hotels scraper
+8. **📱 PWA** — service worker for offline itinerary access
+9. **💬 Itinerary editing via chat** — AI returns structured diff to update itinerary in-place
