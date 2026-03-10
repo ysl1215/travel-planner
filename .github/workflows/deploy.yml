@@ -1,0 +1,79 @@
+# Deploy to Vercel
+#
+# Triggered on:
+#   • Every push to main  → production deployment
+#   • Every pull request  → preview deployment (unique URL per PR)
+#
+# Required GitHub repository secrets (Settings → Secrets and variables → Actions):
+#   VERCEL_TOKEN      — Vercel personal access token (vercel.com/account/tokens)
+#   VERCEL_ORG_ID     — from `cat .vercel/project.json` after first `vercel link`
+#   VERCEL_PROJECT_ID — from `cat .vercel/project.json` after first `vercel link`
+#
+# Required Vercel environment variables (set in Vercel dashboard or via CLI):
+#   OPENROUTER_API_KEY — your OpenRouter key (openrouter.ai/keys)
+#
+# Setup steps:
+#   1. npm i -g vercel
+#   2. vercel login
+#   3. vercel link   (in your project directory; creates .vercel/project.json)
+#   4. Copy VERCEL_ORG_ID and VERCEL_PROJECT_ID from .vercel/project.json
+#   5. Add VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID as GitHub secrets
+#   6. Add OPENROUTER_API_KEY as an Environment Variable in the Vercel dashboard
+
+name: Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # needed to comment the preview URL on PRs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment info
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project artifacts
+        run: vercel build ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        id: deploy
+        run: |
+          URL=$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Preview deployed:** ${{ steps.deploy.outputs.url }}`
+            })
