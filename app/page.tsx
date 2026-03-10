@@ -7,7 +7,7 @@ import BudgetSlider from "@/components/BudgetSlider";
 import ItineraryView from "@/components/ItineraryView";
 import ChatAgent from "@/components/ChatAgent";
 import { TripPlannerInput, Destination, BudgetSplit, TripItinerary } from "@/lib/types";
-import { ArrowLeft, MapPin, Sparkles } from "lucide-react";
+import { ArrowLeft, MapPin, Sparkles, PlayCircle } from "lucide-react";
 
 type AppStep = "form" | "destinations" | "itinerary";
 
@@ -32,6 +32,29 @@ export default function Home() {
   const [isLoadingDestinations, setIsLoadingDestinations] = useState(false);
   const [isLoadingItinerary, setIsLoadingItinerary] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [isLoadingDemo, setIsLoadingDemo] = useState(false);
+
+  const handleDemoMode = useCallback(async () => {
+    setIsLoadingDemo(true);
+    setError(null);
+    try {
+      const [destRes, inputRes] = await Promise.all([
+        fetch("/api/demo?resource=destinations"),
+        fetch("/api/demo?resource=input"),
+      ]);
+      const { destinations: demoDests } = await destRes.json();
+      const { input: demoInput } = await inputRes.json();
+      setTripInput(demoInput);
+      setBudgetSplit(calculateDefaultBudgetSplit(demoInput.budget));
+      setDestinations(demoDests);
+      setStep("destinations");
+    } catch {
+      setError("Failed to load demo data. Please try again.");
+    } finally {
+      setIsLoadingDemo(false);
+    }
+  }, []);
 
   const handleFormSubmit = useCallback(async (input: TripPlannerInput) => {
     setIsLoadingDestinations(true);
@@ -87,6 +110,15 @@ export default function Home() {
       setActiveItineraryDest(destination);
 
       try {
+        // Use the demo itinerary when the selected card is the Lisbon demo destination
+        if (destination.id === "lisbon") {
+          const demoRes = await fetch("/api/demo?resource=itinerary");
+          const { itinerary: demoItin } = await demoRes.json();
+          setItinerary(demoItin);
+          setStep("itinerary");
+          return;
+        }
+
         const response = await fetch("/api/itinerary", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -182,10 +214,32 @@ export default function Home() {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
                 Plan Your Perfect Trip
               </h1>
-              <p className="text-gray-500 max-w-lg mx-auto">
+              <p className="text-gray-500 max-w-lg mx-auto mb-4">
                 Tell us your budget, dates, and preferences — we&apos;ll suggest perfect destinations
                 and build a personalized itinerary just for you.
               </p>
+              {/* Demo Mode Banner */}
+              <div className="inline-flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3">
+                <span className="text-sm text-amber-800">
+                  No API key yet?{" "}
+                  <strong>Preview the full app</strong> with a sample London → Lisbon trip
+                </span>
+                <button
+                  onClick={handleDemoMode}
+                  disabled={isLoadingDemo}
+                  className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-semibold px-4 py-1.5 rounded-xl transition-colors whitespace-nowrap"
+                >
+                  {isLoadingDemo ? (
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <PlayCircle className="w-4 h-4" />
+                  )}
+                  Try Demo
+                </button>
+              </div>
             </div>
             <TripPlannerForm onSubmit={handleFormSubmit} isLoading={isLoadingDestinations} />
           </div>
@@ -203,6 +257,12 @@ export default function Home() {
                 Based on your {tripInput.budget.toLocaleString()} {tripInput.currency} budget from{" "}
                 {tripInput.homeCity}. Select up to 2 to narrow down, then generate a full itinerary.
               </p>
+              {destinations.some((d) => d.id === "lisbon") && (
+                <div className="inline-flex items-center gap-1.5 mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-3 py-1">
+                  <PlayCircle className="w-3.5 h-3.5" />
+                  Demo mode — sample data. Click &quot;Plan Itinerary&quot; on Lisbon to see the full itinerary demo.
+                </div>
+              )}
             </div>
 
             {/* Budget Slider */}

@@ -76,6 +76,7 @@ export interface ItineraryActivity {
   duration: string;
   cost: string;
   tips?: string;
+  waitTime?: string;
   type: "attraction" | "food" | "transport" | "accommodation" | "activity";
 }
 
