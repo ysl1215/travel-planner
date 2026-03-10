@@ -61,11 +61,8 @@ jobs:
         run: vercel build ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        id: deploy
-        run: |
-          URL=$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-
+        run: vercel --prod --token ${{ secrets.VERCEL_TOKEN }}
+        
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
