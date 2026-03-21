@@ -34,15 +34,51 @@ export async function POST(request: NextRequest) {
       prompt
     );
 
-    // Extract JSON from the response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    // Robust JSON extraction and parsing
+    function extractJsonByFirstBracket(text: string, startChar: "{" | "["): string | null {
+      const opening = startChar;
+      const closing = startChar === "{" ? "}" : "]";
+      const startIndex = text.indexOf(opening);
+      if (startIndex === -1) return null;
+      let depth = 0;
+      let inString = false;
+      for (let i = startIndex; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"' && text[i - 1] !== "\\") inString = !inString;
+        if (inString) continue;
+        if (ch === opening) depth++;
+        else if (ch === closing) {
+          depth--;
+          if (depth === 0) return text.slice(startIndex, i + 1);
+        }
+      }
+      return null;
+    }
+
+    function sanitizeJsonTrailingCommas(s: string): string {
+      // Remove trailing commas before } or ]
+      return s.replace(/,\s*(?=[}\]])/g, "");
+    }
+
+    let candidate = extractJsonByFirstBracket(raw, "{") ?? (raw.match(/\{[\s\S]*\}/)?.[0] ?? null);
+    if (!candidate) {
       throw new Error("Could not parse itinerary from AI response");
     }
 
-    const itinerary: TripItinerary = JSON.parse(jsonMatch[0]);
-
-    return NextResponse.json({ itinerary });
+    try {
+      const itinerary: TripItinerary = JSON.parse(candidate);
+      return NextResponse.json({ itinerary });
+    } catch (err) {
+      const sanitized = sanitizeJsonTrailingCommas(candidate);
+      try {
+        const itinerary: TripItinerary = JSON.parse(sanitized);
+        return NextResponse.json({ itinerary });
+      } catch (err2) {
+        throw new Error(
+          `Failed to parse itinerary JSON: ${err2 instanceof Error ? err2.message : String(err2)}. Raw snippet: ${candidate.slice(0, 1000)}`
+        );
+      }
+    }
   } catch (error) {
     console.error("Error generating itinerary:", error);
     const message = error instanceof Error ? error.message : "Failed to generate itinerary";

@@ -20,15 +20,50 @@ export async function POST(request: NextRequest) {
       prompt
     );
 
-    // Extract JSON from the response
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
+    // Robust JSON extraction and parsing for arrays
+    function extractJsonByFirstBracket(text: string, startChar: "{" | "["): string | null {
+      const opening = startChar;
+      const closing = startChar === "{" ? "}" : "]";
+      const startIndex = text.indexOf(opening);
+      if (startIndex === -1) return null;
+      let depth = 0;
+      let inString = false;
+      for (let i = startIndex; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"' && text[i - 1] !== "\\") inString = !inString;
+        if (inString) continue;
+        if (ch === opening) depth++;
+        else if (ch === closing) {
+          depth--;
+          if (depth === 0) return text.slice(startIndex, i + 1);
+        }
+      }
+      return null;
+    }
+
+    function sanitizeJsonTrailingCommas(s: string): string {
+      return s.replace(/,\s*(?=[}\]])/g, "");
+    }
+
+    let candidate = extractJsonByFirstBracket(raw, "[") ?? (raw.match(/\[[\s\S]*\]/)?.[0] ?? null);
+    if (!candidate) {
       throw new Error("Could not parse destination suggestions from AI response");
     }
 
-    const destinations: Destination[] = JSON.parse(jsonMatch[0]);
-
-    return NextResponse.json({ destinations });
+    try {
+      const destinations: Destination[] = JSON.parse(candidate);
+      return NextResponse.json({ destinations });
+    } catch (err) {
+      const sanitized = sanitizeJsonTrailingCommas(candidate);
+      try {
+        const destinations: Destination[] = JSON.parse(sanitized);
+        return NextResponse.json({ destinations });
+      } catch (err2) {
+        throw new Error(
+          `Failed to parse destination JSON: ${err2 instanceof Error ? err2.message : String(err2)}. Raw snippet: ${candidate.slice(0, 1000)}`
+        );
+      }
+    }
   } catch (error) {
     console.error("Error generating destinations:", error);
     const message = error instanceof Error ? error.message : "Failed to generate destinations";
