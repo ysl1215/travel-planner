@@ -130,18 +130,75 @@ export async function POST(request: NextRequest) {
       // otherwise loop and give the model more context (errors) next iteration
     }
 
-    // 4) Fallback: try to parse the last candidate and auto-fill missing imageQuery fields
+    // 4) Fallback: try to parse the last candidate and auto-fill missing required fields
     const finalCandidate = attemptCandidate;
     try {
       const destinations: Destination[] = JSON.parse(finalCandidate);
-      // Auto-fill missing imageQuery using city + country when possible
-      for (const d of destinations) {
+
+      // Helper to generate a stable-ish ID
+      function genId(i: number) {
+        return `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}-${i}`;
+      }
+
+      function defaultFlightHours(homeCity?: string, destCity?: string) {
+        if (!homeCity || !destCity) return 4;
+        if (homeCity.toLowerCase() === destCity.toLowerCase()) return 0;
+        // crude default — choose 4h as a safe mid-range default
+        return 4;
+      }
+
+      // Auto-fill missing required fields with sensible defaults or derived values
+      for (let i = 0; i < destinations.length; i++) {
+        const d: any = destinations[i] as any;
+
+        // Ensure id
+        if (!d.id || String(d.id).trim() === "") d.id = genId(i);
+
+        // Ensure country/city exist as strings (schema requires them)
+        d.country = d.country ?? "";
+        d.city = d.city ?? "";
+
+        // Rationale
+        if (!d.rationale || String(d.rationale).trim() === "") {
+          d.rationale = `Suggested for ${d.city}${d.country ? ", " + d.country : ""} based on user preferences and budget.`;
+        }
+
+        // Highlights
+        if (!Array.isArray(d.highlights) || d.highlights.length === 0) {
+          d.highlights = d.city || d.country ? [`Top sights in ${d.city}${d.country ? ", " + d.country : ""}`] : ["Top sights"];
+        }
+
+        // estimatedFlightHours
+        if (d.estimatedFlightHours === undefined || d.estimatedFlightHours === null || Number.isNaN(Number(d.estimatedFlightHours))) {
+          d.estimatedFlightHours = defaultFlightHours(input.homeCity, d.city);
+        } else {
+          d.estimatedFlightHours = Number(d.estimatedFlightHours);
+        }
+
+        // estimatedBudgetFit
+        const validBudgetFits = ["excellent", "good", "stretch"];
+        if (!d.estimatedBudgetFit || !validBudgetFits.includes(String(d.estimatedBudgetFit))) {
+          d.estimatedBudgetFit = "good";
+        }
+
+        // bestTimeToVisit
+        if (!d.bestTimeToVisit || String(d.bestTimeToVisit).trim() === "") {
+          d.bestTimeToVisit = "Any time";
+        }
+
+        // vibeMatch
+        if (!Array.isArray(d.vibeMatch) || d.vibeMatch.length === 0) {
+          d.vibeMatch = ["culture"];
+        }
+
+        // imageQuery
         if (!d.imageQuery || String(d.imageQuery).trim() === "") {
           const city = d.city ?? "";
           const country = d.country ?? "";
           d.imageQuery = `${city}${country ? ' ' + country : ''}`.trim();
         }
       }
+
       const valid = validateDestinations(destinations as any);
       if (valid) {
         return NextResponse.json({ destinations });
