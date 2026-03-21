@@ -56,68 +56,101 @@ export async function POST(request: NextRequest) {
       throw new Error("Could not parse destination suggestions from AI response");
     }
 
-    try {
-      const destinations: Destination[] = JSON.parse(candidate);
-      const valid = validateDestinations(destinations as any);
-      if (!valid) {
-        console.error('Destination validation errors:', validateDestinations.errors);
-        throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
+    // Helper to compute missing closing brackets/braces for truncated responses
+    function computeMissingClosers(s: string): string {
+      const stack: string[] = [];
+      let inString = false;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === '"' && s[i - 1] !== "\\") inString = !inString;
+        if (inString) continue;
+        if (ch === '{' || ch === '[') stack.push(ch);
+        else if (ch === '}' || ch === ']') {
+          const top = stack[stack.length - 1];
+          if ((ch === '}' && top === '{') || (ch === ']' && top === '[')) stack.pop();
+        }
       }
-      return NextResponse.json({ destinations });
-    } catch (err) {
-      const sanitized = sanitizeJsonTrailingCommas(candidate);
+      let closers = '';
+      while (stack.length) {
+        const opener = stack.pop();
+        if (opener === '{') closers += '}';
+        else if (opener === '[') closers += ']';
+      }
+      return closers;
+    }
+
+    function tryParseAndValidate(s: string) {
       try {
-        const destinations: Destination[] = JSON.parse(sanitized);
-        const valid = validateDestinations(destinations as any);
-        if (!valid) {
-          console.error('Destination validation errors:', validateDestinations.errors);
-          throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
-        }
-        return NextResponse.json({ destinations });
-      } catch (err2) {
-        // Attempt to auto-close any unbalanced open brackets/braces (best-effort repair for truncated responses)
-        function computeMissingClosers(s: string): string {
-          const stack: string[] = [];
-          let inString = false;
-          for (let i = 0; i < s.length; i++) {
-            const ch = s[i];
-            if (ch === '"' && s[i - 1] !== "\\") inString = !inString;
-            if (inString) continue;
-            if (ch === '{' || ch === '[') stack.push(ch);
-            else if (ch === '}' || ch === ']') {
-              const top = stack[stack.length - 1];
-              if ((ch === '}' && top === '{') || (ch === ']' && top === '[')) stack.pop();
-            }
-          }
-          let closers = '';
-          while (stack.length) {
-            const opener = stack.pop();
-            if (opener === '{') closers += '}';
-            else if (opener === '[') closers += ']';
-          }
-          return closers;
-        }
-
-        const closers = computeMissingClosers(sanitized);
-        if (closers) {
-          const repaired = sanitized + closers;
-          try {
-            const destinations: Destination[] = JSON.parse(repaired);
-            const valid = validateDestinations(destinations as any);
-            if (!valid) {
-              console.error('Destination validation errors:', validateDestinations.errors);
-              throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
-            }
-            return NextResponse.json({ destinations });
-          } catch (err3) {
-            throw new Error(`Failed to parse destination JSON after repair: ${err3 instanceof Error ? err3.message : String(err3)}. Raw snippet: ${candidate.slice(0, 1000)}`);
-          }
-        }
-
-        throw new Error(
-          `Failed to parse destination JSON: ${err2 instanceof Error ? err2.message : String(err2)}. Raw snippet: ${candidate.slice(0, 1000)}`
-        );
+        const parsed: Destination[] = JSON.parse(s);
+        const valid = validateDestinations(parsed as any);
+        return { parsed, valid };
+      } catch (e) {
+        return { parsed: null, valid: false };
       }
+    }
+
+    function sanitizeRepair(s: string) {
+      const sanitized = sanitizeJsonTrailingCommas(s);
+      const closers = computeMissingClosers(sanitized);
+      return closers ? sanitized + closers : sanitized;
+    }
+
+    // 1) Try parsing the raw candidate
+    let attemptCandidate = candidate;
+    let result = tryParseAndValidate(attemptCandidate);
+    if (result.parsed && result.valid) {
+      return NextResponse.json({ destinations: result.parsed });
+    }
+
+    // 2) Try sanitized/repair parse
+    attemptCandidate = sanitizeRepair(candidate);
+    result = tryParseAndValidate(attemptCandidate);
+    if (result.parsed && result.valid) {
+      return NextResponse.json({ destinations: result.parsed });
+    }
+
+    // 3) Re-prompt loop: ask the model to correct the JSON up to 3 times
+    let lastFixedRaw: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const extra = attempt > 0 ? `Attempt ${attempt + 1} of 3. Previous attempts failed validation. Only return the missing or corrected fields.` : undefined;
+        lastFixedRaw = await requestJsonCorrection(attemptCandidate, validateDestinations.errors ?? [], "destinations", extra);
+      } catch (e) {
+        console.error('requestJsonCorrection error:', e);
+        continue;
+      }
+
+      const extracted = extractJsonByFirstBracket(lastFixedRaw, "[") ?? (lastFixedRaw.match(/\[[\s\S]*\]/)?.[0] ?? null);
+      if (!extracted) continue;
+      attemptCandidate = sanitizeRepair(extracted);
+      result = tryParseAndValidate(attemptCandidate);
+      if (result.parsed && result.valid) {
+        return NextResponse.json({ destinations: result.parsed });
+      }
+      // otherwise loop and give the model more context (errors) next iteration
+    }
+
+    // 4) Fallback: try to parse the last candidate and auto-fill missing imageQuery fields
+    const finalCandidate = attemptCandidate;
+    try {
+      const destinations: Destination[] = JSON.parse(finalCandidate);
+      // Auto-fill missing imageQuery using city + country when possible
+      for (const d of destinations) {
+        if (!d.imageQuery || String(d.imageQuery).trim() === "") {
+          const city = d.city ?? "";
+          const country = d.country ?? "";
+          d.imageQuery = `${city}${country ? ' ' + country : ''}`.trim();
+        }
+      }
+      const valid = validateDestinations(destinations as any);
+      if (valid) {
+        return NextResponse.json({ destinations });
+      } else {
+        console.error('Destination validation errors after fallback:', validateDestinations.errors);
+        throw new Error(`Destinations JSON failed schema validation after repair/fallback: ${JSON.stringify(validateDestinations.errors)}`);
+      }
+    } catch (err3) {
+      throw new Error(`Failed to parse destination JSON after repair and re-prompts: ${err3 instanceof Error ? err3.message : String(err3)}. Raw snippet: ${candidate.slice(0, 1000)}`);
     }
   } catch (error) {
     console.error("Error generating destinations:", error);
