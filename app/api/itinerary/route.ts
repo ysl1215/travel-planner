@@ -82,7 +82,16 @@ export async function POST(request: NextRequest) {
 
     let candidate = extractJsonByFirstBracket(raw, "{") ?? (raw.match(/\{[\s\S]*\}/)?.[0] ?? null);
     if (!candidate) {
-      throw new Error("Could not parse itinerary from AI response");
+      // If no JSON found, attempt a model-assisted extraction (best-effort): ask the model to return ONLY the intended JSON
+      try {
+        const fixedRaw = await requestJsonCorrection(raw, [], 'itinerary', 'The previous response did not contain JSON. Please return the corrected JSON object only that matches the itinerary schema.');
+        candidate = extractJsonByFirstBracket(fixedRaw, "{") ?? (fixedRaw.match(/\{[\s\S]*\}/)?.[0] ?? null);
+      } catch (e) {
+        // Fall through to final error
+      }
+      if (!candidate) {
+        throw new Error("Could not parse itinerary from AI response");
+      }
     }
 
     try {
