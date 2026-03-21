@@ -56,6 +56,43 @@ function parseModels(preferred?: string): string[] {
   });
 }
 
+// In-memory model health cache to avoid repeatedly trying models that recently failed.
+// TTLs can be tuned via OPENROUTER_MODEL_HEALTH_TTL_MS or learned from status codes.
+const DEFAULT_HEALTH_TTL_MS = Number(process.env.OPENROUTER_MODEL_HEALTH_TTL_MS ?? "60000"); // 60s default
+
+type ModelHealthEntry = { failedAt: number; ttl: number; error?: string };
+const modelHealth = new Map<string, ModelHealthEntry>();
+
+function getFailTTLForStatus(status: number) {
+  if (status === 429) return 60 * 1000; // 1 minute for rate limits
+  if (status === 402) return 5 * 60 * 1000; // 5 minutes for insufficient credits
+  if (status === 404) return 60 * 60 * 1000; // 1 hour for missing endpoints
+  return DEFAULT_HEALTH_TTL_MS;
+}
+
+function markModelFailed(model: string, status: number, error?: string) {
+  const ttl = getFailTTLForStatus(status);
+  modelHealth.set(model, { failedAt: Date.now(), ttl, error });
+  console.warn(`Marked model ${model} unhealthy for ${ttl / 1000}s: ${error ?? ""}`);
+}
+
+function isModelBlacklisted(model: string) {
+  const entry = modelHealth.get(model);
+  if (!entry) return false;
+  if (Date.now() - entry.failedAt > entry.ttl) {
+    modelHealth.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function prioritizeModels(models: string[]) {
+  const healthy = models.filter((m) => !isModelBlacklisted(m));
+  if (healthy.length === models.length) return models;
+  const blacklisted = models.filter((m) => isModelBlacklisted(m));
+  return [...healthy, ...blacklisted];
+}
+
 function shouldSkipModel(status: number, parsedBody?: any) {
   // Treat rate limits, explicit 'no endpoints' (model not available),
   // and insufficient credits (402) as retryable so we can fall back to other models.
@@ -84,12 +121,15 @@ export async function generateWithOpenRouter(
   userPrompt: string,
   model?: string
 ): Promise<string> {
-  const models = parseModels(model);
+  const rawModels = parseModels(model);
+  const models = prioritizeModels(rawModels);
   let lastError: string | null = null;
   // Try progressively smaller token budgets for each model to handle 402 (insufficient credits).
   const tokenCandidates = [4096, 2048, 1024, 512];
 
   for (const candidate of models) {
+    let candidateError: { status: number; text: string } | null = null;
+
     for (const maxTokens of tokenCandidates) {
       const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
@@ -120,19 +160,25 @@ export async function generateWithOpenRouter(
 
       // If OpenRouter reports insufficient credits (402), try again with a lower max_tokens
       if (response.status === 402) {
-        lastError = `Model ${candidate} insufficient credits for max_tokens ${maxTokens} (status 402)`;
+        candidateError = { status: 402, text };
         // try next lower token budget for same candidate
         continue;
       }
 
       // If the model is unavailable or rate-limited (404/429/etc), skip to next candidate
       if (shouldSkipModel(response.status, parsed)) {
-        lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
+        candidateError = { status: response.status, text };
         break; // try next model
       }
 
       // Non-handler failure — surface to caller
       throw new Error(`OpenRouter API error ${response.status}: ${text}`);
+    }
+
+    // Mark the candidate as failed if we recorded an error (so it's deprioritized for a TTL)
+    if (candidateError) {
+      markModelFailed(candidate, candidateError.status, candidateError.text);
+      lastError = `Model ${candidate} failed: status ${candidateError.status}`;
     }
 
     // exhausted token candidates for this model — move to next model
@@ -149,11 +195,14 @@ export async function streamWithOpenRouter(
   messages: Message[],
   model?: string
 ): Promise<ReadableStream> {
-  const models = parseModels(model);
+  const rawModels = parseModels(model);
+  const models = prioritizeModels(rawModels);
   let lastError: string | null = null;
   const tokenCandidates = [2048, 1024, 512];
 
   for (const candidate of models) {
+    let candidateError: { status: number; text: string } | null = null;
+
     for (const maxTokens of tokenCandidates) {
       const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
@@ -178,12 +227,12 @@ export async function streamWithOpenRouter(
 
         // If OpenRouter reports insufficient credits (402), try again with lower max_tokens
         if (response.status === 402) {
-          lastError = `Model ${candidate} insufficient credits for max_tokens ${maxTokens} (status 402)`;
+          candidateError = { status: 402, text };
           continue; // try next lower token budget for same candidate
         }
 
         if (shouldSkipModel(response.status, parsed)) {
-          lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
+          candidateError = { status: response.status, text };
           break; // try next model
         }
 
@@ -232,6 +281,12 @@ export async function streamWithOpenRouter(
           }
         },
       });
+    }
+
+    // Mark model as failed and deprioritize for a TTL
+    if (candidateError) {
+      markModelFailed(candidate, candidateError.status, candidateError.text);
+      lastError = `Model ${candidate} failed: status ${candidateError.status}`;
     }
 
     // try next model
