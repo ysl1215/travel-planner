@@ -125,7 +125,7 @@ export async function generateWithOpenRouter(
   const models = prioritizeModels(rawModels);
   let lastError: string | null = null;
   // Try progressively smaller token budgets for each model to handle 402 (insufficient credits).
-  const tokenCandidates = [4096, 2048, 1024, 512];
+  const tokenCandidates = [4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
 
   for (const candidate of models) {
     let candidateError: { status: number; text: string } | null = null;
@@ -198,7 +198,7 @@ export async function streamWithOpenRouter(
   const rawModels = parseModels(model);
   const models = prioritizeModels(rawModels);
   let lastError: string | null = null;
-  const tokenCandidates = [2048, 1024, 512];
+  const tokenCandidates = [2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
 
   for (const candidate of models) {
     let candidateError: { status: number; text: string } | null = null;
