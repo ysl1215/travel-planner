@@ -86,43 +86,57 @@ export async function generateWithOpenRouter(
 ): Promise<string> {
   const models = parseModels(model);
   let lastError: string | null = null;
+  // Try progressively smaller token budgets for each model to handle 402 (insufficient credits).
+  const tokenCandidates = [4096, 2048, 1024, 512];
 
   for (const candidate of models) {
-    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: commonHeaders(),
-      body: JSON.stringify({
-        model: candidate,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.7,
-        max_tokens: 4096,
-      }),
-    });
+    for (const maxTokens of tokenCandidates) {
+      const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: "POST",
+        headers: commonHeaders(),
+        body: JSON.stringify({
+          model: candidate,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: maxTokens,
+        }),
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      return (data.choices?.[0]?.message?.content as string) ?? "";
+      if (response.ok) {
+        const data = await response.json();
+        return (data.choices?.[0]?.message?.content as string) ?? "";
+      }
+
+      const text = await response.text();
+      let parsed: any = undefined;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        // ignore
+      }
+
+      // If OpenRouter reports insufficient credits (402), try again with a lower max_tokens
+      if (response.status === 402) {
+        lastError = `Model ${candidate} insufficient credits for max_tokens ${maxTokens} (status 402)`;
+        // try next lower token budget for same candidate
+        continue;
+      }
+
+      // If the model is unavailable or rate-limited (404/429/etc), skip to next candidate
+      if (shouldSkipModel(response.status, parsed)) {
+        lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
+        break; // try next model
+      }
+
+      // Non-handler failure — surface to caller
+      throw new Error(`OpenRouter API error ${response.status}: ${text}`);
     }
 
-    const text = await response.text();
-    let parsed: any = undefined;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      // ignore
-    }
-
-    if (shouldSkipModel(response.status, parsed)) {
-      lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
-      // try next candidate
-      continue;
-    }
-
-    // Non-rate-limit failure — surface to caller
-    throw new Error(`OpenRouter API error ${response.status}: ${text}`);
+    // exhausted token candidates for this model — move to next model
+    continue;
   }
 
   throw new Error(`All models failed. Last error: ${lastError ?? "unknown"}`);
@@ -137,79 +151,90 @@ export async function streamWithOpenRouter(
 ): Promise<ReadableStream> {
   const models = parseModels(model);
   let lastError: string | null = null;
+  const tokenCandidates = [2048, 1024, 512];
 
   for (const candidate of models) {
-    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: commonHeaders(),
-      body: JSON.stringify({
-        model: candidate,
-        messages,
-        temperature: 0.7,
-        max_tokens: 2048,
-        stream: true,
-      }),
-    });
+    for (const maxTokens of tokenCandidates) {
+      const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: "POST",
+        headers: commonHeaders(),
+        body: JSON.stringify({
+          model: candidate,
+          messages,
+          temperature: 0.7,
+          max_tokens: maxTokens,
+          stream: true,
+        }),
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      let parsed: any = undefined;
-      try {
-        parsed = JSON.parse(text);
-      } catch (e) {
-        // ignore
-      }
-
-      if (shouldSkipModel(response.status, parsed)) {
-        lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
-        continue; // try next model
-      }
-
-      throw new Error(`OpenRouter API error ${response.status}: ${text}`);
-    }
-
-    const body = response.body;
-    if (!body) throw new Error("OpenRouter returned empty response body");
-
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-
-    // Parse the SSE stream and forward raw text chunks
-    return new ReadableStream({
-      async start(controller) {
-        const reader = body.getReader();
-        let buffer = "";
-
+      if (!response.ok) {
+        const text = await response.text();
+        let parsed: any = undefined;
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          parsed = JSON.parse(text);
+        } catch (e) {
+          // ignore
+        }
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
+        // If OpenRouter reports insufficient credits (402), try again with lower max_tokens
+        if (response.status === 402) {
+          lastError = `Model ${candidate} insufficient credits for max_tokens ${maxTokens} (status 402)`;
+          continue; // try next lower token budget for same candidate
+        }
 
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed.startsWith("data:")) continue;
-              const jsonStr = trimmed.slice(5).trim();
-              if (jsonStr === "[DONE]") continue;
+        if (shouldSkipModel(response.status, parsed)) {
+          lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
+          break; // try next model
+        }
 
-              try {
-                const parsed = JSON.parse(jsonStr);
-                const text: string = parsed.choices?.[0]?.delta?.content ?? "";
-                if (text) controller.enqueue(encoder.encode(text));
-              } catch (e) {
-                // ignore malformed SSE lines
+        throw new Error(`OpenRouter API error ${response.status}: ${text}`);
+      }
+
+      const body = response.body;
+      if (!body) throw new Error("OpenRouter returned empty response body");
+
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+
+      // Parse the SSE stream and forward raw text chunks
+      return new ReadableStream({
+        async start(controller) {
+          const reader = body.getReader();
+          let buffer = "";
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n");
+              buffer = lines.pop() ?? "";
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith("data:")) continue;
+                const jsonStr = trimmed.slice(5).trim();
+                if (jsonStr === "[DONE]") continue;
+
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  const text: string = parsed.choices?.[0]?.delta?.content ?? "";
+                  if (text) controller.enqueue(encoder.encode(text));
+                } catch (e) {
+                  // ignore malformed SSE lines
+                }
               }
             }
+          } finally {
+            reader.releaseLock();
+            controller.close();
           }
-        } finally {
-          reader.releaseLock();
-          controller.close();
-        }
-      },
-    });
+        },
+      });
+    }
+
+    // try next model
   }
 
   throw new Error(`All models failed for streaming. Last error: ${lastError ?? "unknown"}`);
