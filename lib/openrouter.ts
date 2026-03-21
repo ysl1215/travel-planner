@@ -56,12 +56,14 @@ function parseModels(preferred?: string): string[] {
   });
 }
 
-function isRateLimited(status: number, parsedBody?: any) {
+function shouldSkipModel(status: number, parsedBody?: any) {
+  // Treat rate limits and explicit 'no endpoints' (model not available) as retryable.
   if (status === 429) return true;
   const msg = (parsedBody?.error?.message || "").toString().toLowerCase();
   if (msg.includes("rate-lim") || msg.includes("rate-limited") || msg.includes("temporarily rate-limited")) return true;
+  if (status === 404 && (msg.includes("no endpoints") || msg.includes("no endpoints found"))) return true;
   const raw = (parsedBody?.error?.metadata?.raw || "").toString().toLowerCase();
-  if (raw.includes("rate-limited")) return true;
+  if (raw.includes("rate-limited") || raw.includes("no endpoints")) return true;
   if (parsedBody?.error?.code === 429) return true;
   return false;
 }
@@ -105,8 +107,8 @@ export async function generateWithOpenRouter(
       // ignore
     }
 
-    if (isRateLimited(response.status, parsed)) {
-      lastError = `Model ${candidate} rate-limited (status ${response.status})`;
+    if (shouldSkipModel(response.status, parsed)) {
+      lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
       // try next candidate
       continue;
     }
@@ -150,8 +152,8 @@ export async function streamWithOpenRouter(
         // ignore
       }
 
-      if (isRateLimited(response.status, parsed)) {
-        lastError = `Model ${candidate} rate-limited (status ${response.status})`;
+      if (shouldSkipModel(response.status, parsed)) {
+        lastError = `Model ${candidate} unavailable or rate-limited (status ${response.status})`;
         continue; // try next model
       }
 
