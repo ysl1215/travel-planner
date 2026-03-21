@@ -74,7 +74,11 @@ cp .env.local.example .env.local
 ### 3. (Optional) Install Python for live flight prices
 
 ```bash
-pip install fast-flights
+# Recommended: create a local virtualenv and install fast-flights
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install fast-flights
 # Without this, the "Check live prices" button shows an error — everything else works fine.
 ```
 
