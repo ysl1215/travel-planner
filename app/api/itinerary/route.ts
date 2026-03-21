@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import Ajv from "ajv";
+import itinerarySchema from "@/lib/schemas/itinerary.schema.json";
 import { generateWithOpenRouter } from "@/lib/openrouter";
 import { buildItineraryPrompt } from "@/lib/prompts";
 import { TripPlannerInput, TripItinerary } from "@/lib/types";
+
+const ajv = new Ajv();
+const validateItinerary = ajv.compile(itinerarySchema as any);
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,11 +72,21 @@ export async function POST(request: NextRequest) {
 
     try {
       const itinerary: TripItinerary = JSON.parse(candidate);
+      const valid = validateItinerary(itinerary as any);
+      if (!valid) {
+        console.error('Itinerary validation errors:', validateItinerary.errors);
+        throw new Error(`Itinerary JSON failed schema validation: ${JSON.stringify(validateItinerary.errors)}`);
+      }
       return NextResponse.json({ itinerary });
     } catch (err) {
       const sanitized = sanitizeJsonTrailingCommas(candidate);
       try {
         const itinerary: TripItinerary = JSON.parse(sanitized);
+        const valid = validateItinerary(itinerary as any);
+        if (!valid) {
+          console.error('Itinerary validation errors:', validateItinerary.errors);
+          throw new Error(`Itinerary JSON failed schema validation: ${JSON.stringify(validateItinerary.errors)}`);
+        }
         return NextResponse.json({ itinerary });
       } catch (err2) {
         // Attempt to auto-close any unbalanced open brackets/braces (best-effort repair for truncated responses)
@@ -102,6 +117,11 @@ export async function POST(request: NextRequest) {
           const repaired = sanitized + closers;
           try {
             const itinerary: TripItinerary = JSON.parse(repaired);
+            const valid = validateItinerary(itinerary as any);
+            if (!valid) {
+              console.error('Itinerary validation errors:', validateItinerary.errors);
+              throw new Error(`Itinerary JSON failed schema validation: ${JSON.stringify(validateItinerary.errors)}`);
+            }
             return NextResponse.json({ itinerary });
           } catch (err3) {
             throw new Error(`Failed to parse itinerary JSON after repair: ${err3 instanceof Error ? err3.message : String(err3)}. Raw snippet: ${candidate.slice(0, 1000)}`);

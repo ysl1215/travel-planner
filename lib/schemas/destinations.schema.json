@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "country", "city", "rationale", "highlights", "estimatedFlightHours", "estimatedBudgetFit", "bestTimeToVisit", "vibeMatch", "imageQuery"],
+    "properties": {
+      "id": { "type": "string" },
+      "country": { "type": "string" },
+      "city": { "type": "string" },
+      "region": { "type": "string" },
+      "rationale": { "type": "string" },
+      "highlights": { "type": "array", "items": { "type": "string" } },
+      "estimatedFlightHours": { "type": "number" },
+      "estimatedBudgetFit": { "type": "string", "enum": ["excellent", "good", "stretch"] },
+      "bestTimeToVisit": { "type": "string" },
+      "vibeMatch": { "type": "array", "items": { "type": "string" } },
+      "imageQuery": { "type": "string" }
+    },
+    "additionalProperties": true
+  }
+}

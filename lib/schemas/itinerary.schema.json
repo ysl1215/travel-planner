@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["destination", "totalDays", "overview", "days"],
+  "properties": {
+    "destination": { "type": "string" },
+    "totalDays": { "type": "integer", "minimum": 1 },
+    "overview": { "type": "string" },
+    "days": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["day", "location"],
+        "properties": {
+          "day": { "type": "integer", "minimum": 1 },
+          "location": { "type": "string" },
+          "theme": { "type": "string" },
+          "morning": { "type": "array", "items": { "type": "object" } },
+          "afternoon": { "type": "array", "items": { "type": "object" } },
+          "evening": { "type": "array", "items": { "type": "object" } },
+          "travelNote": { "type": "string" },
+          "accommodation": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "topAttractions": { "type": "array", "items": { "type": "object" } },
+    "foodRecommendations": { "type": "array", "items": { "type": "object" } },
+    "route": { "type": "array", "items": { "type": "object" } },
+    "practicalTips": { "type": "array", "items": { "type": "string" } },
+    "bestTimeToVisit": { "type": "string" }
+  },
+  "additionalProperties": true
+}

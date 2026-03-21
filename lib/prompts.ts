@@ -38,7 +38,16 @@ Respond with a JSON array of destinations in this exact format:
   }
 ]
 
-Only respond with the JSON array, no other text.`;
+Only respond with the JSON array, no other text.
+
+  Strict format rules:
+  - Return a single valid JSON array only (no markdown, code fences, or extra commentary).
+  - Keep the JSON compact; avoid unnecessary whitespace when possible.
+  - Follow the field names and types above exactly.
+  - If the response is truncated by token limits, return the most complete valid JSON possible.
+
+  Example (compact): [{"id":"1","country":"Portugal","city":"Lisbon","rationale":"Fits budget and season","highlights":["Belem","Alfama"],"estimatedFlightHours":2,"estimatedBudgetFit":"excellent","bestTimeToVisit":"May-June","vibeMatch":["culture","relaxation"],"imageQuery":"Lisbon Portugal"}]
+  `;
 }
 
 export function buildItineraryPrompt(
@@ -137,7 +146,16 @@ Respond with JSON in this exact format:
   "bestTimeToVisit": "Specific months and why"
 }
 
-Only respond with the JSON, no other text.`;
+Only respond with the JSON, no other text.
+
+  Strict format rules:
+  - Return a single valid JSON object only (no markdown, code fences, or extra commentary).
+  - Keep the JSON compact; avoid unnecessary whitespace when possible.
+  - Follow the field names and types above exactly.
+  - If the response is truncated by token limits, return the most complete valid JSON possible; prefer removing optional fields before breaking required structure.
+
+  Example (compact): {"destination":"Lisbon, Portugal","totalDays":6,"overview":"Short overview","days":[{"day":1,"location":"Alfama","theme":"Historic Lisbon","morning":[],"afternoon":[],"evening":[]}],"topAttractions":[],"foodRecommendations":[],"route":[],"practicalTips":[],"bestTimeToVisit":"May-June"}
+  `;
 }
 
 export function buildChatSystemPrompt(

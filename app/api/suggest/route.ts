@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import Ajv from "ajv";
+import destinationsSchema from "@/lib/schemas/destinations.schema.json";
 import { generateWithOpenRouter } from "@/lib/openrouter";
 import { buildDestinationPrompt } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
+
+const ajv = new Ajv();
+const validateDestinations = ajv.compile(destinationsSchema as any);
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,11 +57,21 @@ export async function POST(request: NextRequest) {
 
     try {
       const destinations: Destination[] = JSON.parse(candidate);
+      const valid = validateDestinations(destinations as any);
+      if (!valid) {
+        console.error('Destination validation errors:', validateDestinations.errors);
+        throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
+      }
       return NextResponse.json({ destinations });
     } catch (err) {
       const sanitized = sanitizeJsonTrailingCommas(candidate);
       try {
         const destinations: Destination[] = JSON.parse(sanitized);
+        const valid = validateDestinations(destinations as any);
+        if (!valid) {
+          console.error('Destination validation errors:', validateDestinations.errors);
+          throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
+        }
         return NextResponse.json({ destinations });
       } catch (err2) {
         // Attempt to auto-close any unbalanced open brackets/braces (best-effort repair for truncated responses)
@@ -87,6 +102,11 @@ export async function POST(request: NextRequest) {
           const repaired = sanitized + closers;
           try {
             const destinations: Destination[] = JSON.parse(repaired);
+            const valid = validateDestinations(destinations as any);
+            if (!valid) {
+              console.error('Destination validation errors:', validateDestinations.errors);
+              throw new Error(`Destinations JSON failed schema validation: ${JSON.stringify(validateDestinations.errors)}`);
+            }
             return NextResponse.json({ destinations });
           } catch (err3) {
             throw new Error(`Failed to parse destination JSON after repair: ${err3 instanceof Error ? err3.message : String(err3)}. Raw snippet: ${candidate.slice(0, 1000)}`);
