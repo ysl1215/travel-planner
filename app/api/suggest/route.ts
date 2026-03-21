@@ -59,6 +59,40 @@ export async function POST(request: NextRequest) {
         const destinations: Destination[] = JSON.parse(sanitized);
         return NextResponse.json({ destinations });
       } catch (err2) {
+        // Attempt to auto-close any unbalanced open brackets/braces (best-effort repair for truncated responses)
+        function computeMissingClosers(s: string): string {
+          const stack: string[] = [];
+          let inString = false;
+          for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (ch === '"' && s[i - 1] !== "\\") inString = !inString;
+            if (inString) continue;
+            if (ch === '{' || ch === '[') stack.push(ch);
+            else if (ch === '}' || ch === ']') {
+              const top = stack[stack.length - 1];
+              if ((ch === '}' && top === '{') || (ch === ']' && top === '[')) stack.pop();
+            }
+          }
+          let closers = '';
+          while (stack.length) {
+            const opener = stack.pop();
+            if (opener === '{') closers += '}';
+            else if (opener === '[') closers += ']';
+          }
+          return closers;
+        }
+
+        const closers = computeMissingClosers(sanitized);
+        if (closers) {
+          const repaired = sanitized + closers;
+          try {
+            const destinations: Destination[] = JSON.parse(repaired);
+            return NextResponse.json({ destinations });
+          } catch (err3) {
+            throw new Error(`Failed to parse destination JSON after repair: ${err3 instanceof Error ? err3.message : String(err3)}. Raw snippet: ${candidate.slice(0, 1000)}`);
+          }
+        }
+
         throw new Error(
           `Failed to parse destination JSON: ${err2 instanceof Error ? err2.message : String(err2)}. Raw snippet: ${candidate.slice(0, 1000)}`
         );
