@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Ajv from "ajv";
 import destinationsSchema from "@/lib/schemas/destinations.schema.json";
 import { generateWithOpenRouter } from "@/lib/openrouter";
+import { requestJsonCorrection } from "@/lib/aiFix";
 import { buildDestinationPrompt } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
 
