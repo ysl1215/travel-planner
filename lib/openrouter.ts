@@ -65,7 +65,9 @@ const modelHealth = new Map<string, ModelHealthEntry>();
 
 function getFailTTLForStatus(status: number) {
   if (status === 429) return 60 * 1000; // 1 minute for rate limits
-  if (status === 402) return 5 * 60 * 1000; // 5 minutes for insufficient credits
+  // 402 (insufficient credits) -> blacklist for 24 hours by default; configurable via OPENROUTER_402_TTL_MS (ms)
+  const ttl402 = Number(process.env.OPENROUTER_402_TTL_MS ?? String(24 * 60 * 60 * 1000));
+  if (status === 402) return ttl402;
   if (status === 404) return 60 * 60 * 1000; // 1 hour for missing endpoints
   return DEFAULT_HEALTH_TTL_MS;
 }
@@ -119,13 +121,15 @@ function shouldSkipModel(status: number, parsedBody?: any) {
 export async function generateWithOpenRouter(
   systemPrompt: string,
   userPrompt: string,
-  model?: string
+  model?: string,
+  opts?: { preferShortFirst?: boolean; tokenCandidates?: number[] }
 ): Promise<string> {
   const rawModels = parseModels(model);
   const models = prioritizeModels(rawModels);
   let lastError: string | null = null;
   // Try progressively smaller token budgets for each model to handle 402 (insufficient credits).
-  const tokenCandidates = [4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
+  const defaultTokenCandidates = opts?.tokenCandidates ?? [4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
+  const tokenCandidates = opts?.preferShortFirst ? [...defaultTokenCandidates].reverse() : defaultTokenCandidates;
 
   for (const candidate of models) {
     let candidateError: { status: number; text: string } | null = null;

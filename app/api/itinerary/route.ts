@@ -15,6 +15,8 @@ export async function POST(request: NextRequest) {
       destination,
       input,
       budgetSplit,
+      expand = false,
+      preferModel,
     }: {
       destination: string;
       input: TripPlannerInput;
@@ -25,6 +27,8 @@ export async function POST(request: NextRequest) {
         activities: number;
         misc: number;
       };
+      expand?: boolean;
+      preferModel?: string;
     } = await request.json();
 
     if (!destination || !input) {
@@ -35,9 +39,13 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = buildItineraryPrompt(destination, input, budgetSplit);
+    // Short-first behavior by default; caller may set expand=true to request a full, higher-token reply
+    const opts = expand ? undefined : { preferShortFirst: true } as any;
     const raw = await generateWithOpenRouter(
       "You are an expert travel planner with deep local knowledge. Always respond with valid JSON only.",
-      prompt
+      prompt,
+      preferModel,
+      opts
     );
 
     // Robust JSON extraction and parsing
