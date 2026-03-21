@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Ajv from "ajv";
 import destinationsSchema from "@/lib/schemas/destinations.schema.json";
-import { generateWithOpenRouter } from "@/lib/openrouter";
+import { generate } from "@/lib/ai";
 import { requestJsonCorrection } from "@/lib/aiFix";
 import { buildDestinationPrompt } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = buildDestinationPrompt(input);
-    const raw = await generateWithOpenRouter(
+    const raw = await generate(
       "You are an expert travel planner. Always respond with valid JSON only.",
       prompt
     );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Ajv from "ajv";
 import itinerarySchema from "@/lib/schemas/itinerary.schema.json";
-import { generateWithOpenRouter } from "@/lib/openrouter";
+import { generate } from "@/lib/ai";
 import { requestJsonCorrection } from "@/lib/aiFix";
 import { buildItineraryPrompt } from "@/lib/prompts";
 import { TripPlannerInput, TripItinerary } from "@/lib/types";
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     // Short-first behavior by default; caller may set expand=true to request a full, higher-token reply
     const promptToUse = expand ? fullPrompt : shortPrompt;
     const opts = expand ? undefined : { preferShortFirst: true } as any;
-    const raw = await generateWithOpenRouter(
+    const raw = await generate(
       "You are an expert travel planner with deep local knowledge. Always respond with valid JSON only.",
       promptToUse,
       preferModel,

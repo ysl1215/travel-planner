@@ -2,7 +2,7 @@
  * Helper for requesting JSON corrections from the model when responses fail schema validation.
  */
 
-import { generateWithOpenRouter } from "@/lib/openrouter";
+import { generate } from "@/lib/ai";
 
 export async function requestJsonCorrection(
   invalidJson: string,
@@ -17,6 +17,6 @@ export async function requestJsonCorrection(
 
   if (extra) userPrompt += `\n\n${extra}`;
 
-  const fixed = await generateWithOpenRouter(systemPrompt, userPrompt);
+  const fixed = await generate(systemPrompt, userPrompt);
   return fixed;
 }
