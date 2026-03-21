@@ -57,14 +57,22 @@ function parseModels(preferred?: string): string[] {
 }
 
 function shouldSkipModel(status: number, parsedBody?: any) {
-  // Treat rate limits and explicit 'no endpoints' (model not available) as retryable.
+  // Treat rate limits, explicit 'no endpoints' (model not available),
+  // and insufficient credits (402) as retryable so we can fall back to other models.
   if (status === 429) return true;
+
+  // OpenRouter returns 402 when the request exceeds available credits or token quota.
+  if (status === 402) {
+    const m = (parsedBody?.error?.message || "").toString().toLowerCase();
+    if (m.includes("requires more credits") || m.includes("fewer max_tokens") || m.includes("can only afford") || m.includes("requested up to")) return true;
+  }
+
   const msg = (parsedBody?.error?.message || "").toString().toLowerCase();
   if (msg.includes("rate-lim") || msg.includes("rate-limited") || msg.includes("temporarily rate-limited")) return true;
   if (status === 404 && (msg.includes("no endpoints") || msg.includes("no endpoints found"))) return true;
   const raw = (parsedBody?.error?.metadata?.raw || "").toString().toLowerCase();
-  if (raw.includes("rate-limited") || raw.includes("no endpoints")) return true;
-  if (parsedBody?.error?.code === 429) return true;
+  if (raw.includes("rate-limited") || raw.includes("no endpoints") || raw.includes("requires more credits") || raw.includes("fewer max_tokens")) return true;
+  if (parsedBody?.error?.code === 429 || parsedBody?.error?.code === 402) return true;
   return false;
 }
 
