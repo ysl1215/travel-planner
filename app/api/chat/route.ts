@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { streamWithOpenRouter } from "@/lib/openrouter";
+import { stream } from "@/lib/ai";
 import { buildChatSystemPrompt } from "@/lib/prompts";
 import { TripPlannerInput } from "@/lib/types";
 

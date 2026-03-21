@@ -79,3 +79,100 @@ export async function generateWithLocalModel(
 
   throw new Error(`All local model attempts failed. Last error: ${lastError ?? 'unknown'}`);
 }
+
+export async function streamWithLocalModel(messages: { role: string; content: string }[], model?: string): Promise<ReadableStream> {
+  const baseUrl = process.env.LOCAL_MODEL_URL?.trim() || 'http://localhost:8000/generate';
+
+  const system = messages.find((m) => m.role === 'system')?.content ?? '';
+  const userText = messages.filter((m) => m.role !== 'system').map((m) => `${m.role}: ${m.content}`).join('\n\n');
+  const combined = `${system}\n\n${userText}`;
+
+  const tokenCandidates = [2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  for (const maxTokens of tokenCandidates) {
+    try {
+      const body = {
+        model: model ?? undefined,
+        system,
+        prompt: combined,
+        max_tokens: maxTokens,
+        temperature: 0.7,
+        stream: true,
+      };
+
+      const res = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const raw = await res.text();
+        if (res.status === 402) {
+          continue; // try lower budgets
+        }
+        if (res.status === 429 || res.status === 404) {
+          throw new Error(`Local model ${res.status}: ${raw}`);
+        }
+        throw new Error(`Local model error ${res.status}: ${raw}`);
+      }
+
+      const bodyStream = res.body;
+      if (!bodyStream) {
+        const text = await res.text();
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(text));
+            controller.close();
+          },
+        });
+      }
+
+      return new ReadableStream({
+        async start(controller) {
+          const reader = bodyStream.getReader();
+          let buffer = '';
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() ?? '';
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                let jsonStr: string | null = null;
+                if (trimmed.startsWith('data:')) {
+                  jsonStr = trimmed.slice(5).trim();
+                  if (jsonStr === '[DONE]') continue;
+                } else {
+                  jsonStr = trimmed;
+                }
+
+                if (!jsonStr) continue;
+
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  const textChunk = parsed?.choices?.[0]?.delta?.content ?? parsed?.delta?.content ?? parsed?.output?.[0]?.content?.[0]?.text ?? parsed?.text ?? parsed?.candidates?.[0]?.content ?? null;
+                  if (textChunk) controller.enqueue(encoder.encode(String(textChunk)));
+                } catch (e) {
+                  // ignore non-json chunks
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock();
+            controller.close();
+          }
+        },
+      });
+    } catch (err) {
+      continue;
+    }
+  }
+
+  throw new Error('All local streaming attempts failed.');
+}

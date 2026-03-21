@@ -113,3 +113,123 @@ export async function generateWithGemini(
 
   throw new Error(`All Gemini attempts failed. Last error: ${lastError ?? 'unknown'}`);
 }
+
+export async function streamWithGemini(messages: { role: string; content: string }[], model?: string): Promise<ReadableStream> {
+  const modelToUse = model ?? DEFAULT_MODEL;
+  const apiUrl = process.env.GEMINI_API_URL?.trim();
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+
+  if (!apiUrl && !apiKey) {
+    throw new Error('GEMINI_API_KEY or GEMINI_API_URL must be set to use Gemini provider');
+  }
+
+  const system = messages.find((m) => m.role === 'system')?.content ?? '';
+  const userText = messages.filter((m) => m.role !== 'system').map((m) => `${m.role}: ${m.content}`).join('\n\n');
+  const combined = `${system}\n\n${userText}`;
+
+  const tokenCandidates = [2048, 1024, 512, 256, 128, 64, 32, 16, 8, 1];
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  for (const maxTokens of tokenCandidates) {
+    try {
+      let url: string;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let body: any;
+
+      if (apiUrl) {
+        url = apiUrl;
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        body = {
+          model: modelToUse,
+          input: { text: combined },
+          temperature: 0.7,
+          max_output_tokens: maxTokens,
+          stream: true,
+        };
+      } else {
+        url = `https://generativelanguage.googleapis.com/v1beta2/models/${encodeURIComponent(
+          modelToUse
+        )}:generate?key=${apiKey}`;
+        body = {
+          input: { text: combined },
+          maxOutputTokens: maxTokens,
+          temperature: 0.7,
+          stream: true,
+        };
+      }
+
+      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+
+      if (!res.ok) {
+        const raw = await res.text();
+        if (res.status === 402) {
+          // try lower budgets
+          continue;
+        }
+        if (res.status === 429 || res.status === 404) {
+          throw new Error(`Gemini API ${res.status}: ${raw}`);
+        }
+        throw new Error(`Gemini API error ${res.status}: ${raw}`);
+      }
+
+      // If the provider returned a streaming body, parse it. Otherwise return a stream that emits the full response body.
+      const bodyStream = res.body;
+      if (!bodyStream) {
+        const text = await res.text();
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(text));
+            controller.close();
+          },
+        });
+      }
+
+      return new ReadableStream({
+        async start(controller) {
+          const reader = bodyStream.getReader();
+          let buffer = '';
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() ?? '';
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                let jsonStr: string | null = null;
+                if (trimmed.startsWith('data:')) {
+                  jsonStr = trimmed.slice(5).trim();
+                  if (jsonStr === '[DONE]') continue;
+                } else {
+                  jsonStr = trimmed;
+                }
+
+                if (!jsonStr) continue;
+
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  // try multiple locations for incremental content
+                  const textChunk = parsed?.choices?.[0]?.delta?.content ?? parsed?.delta?.content ?? parsed?.output?.[0]?.content?.[0]?.text ?? parsed?.candidates?.[0]?.content ?? parsed?.text ?? null;
+                  if (textChunk) controller.enqueue(encoder.encode(String(textChunk)));
+                } catch (e) {
+                  // ignore non-json chunks
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock();
+            controller.close();
+          }
+        },
+      });
+    } catch (err) {
+      // try next token budget
+      continue;
+    }
+  }
+
+  throw new Error('All Gemini streaming attempts failed.');
+}

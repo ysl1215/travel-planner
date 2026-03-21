@@ -7,9 +7,9 @@
  * AI_PROVIDER_ORDER (comma-separated). Set AI_PROVIDER to prefer a primary.
  */
 
-import { generateWithOpenRouter } from "@/lib/openrouter";
-import { generateWithGemini } from "@/lib/gemini";
-import { generateWithLocalModel } from "@/lib/localModel";
+import { generateWithOpenRouter, streamWithOpenRouter } from "@/lib/openrouter";
+import { generateWithGemini, streamWithGemini } from "@/lib/gemini";
+import { generateWithLocalModel, streamWithLocalModel } from "@/lib/localModel";
 
 type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[] };
 
@@ -97,4 +97,50 @@ export async function generate(
   }
 
   throw new Error(`All providers failed. Last error: ${lastError ?? "unknown"}`);
+}
+
+export async function stream(messages: any[], model?: string): Promise<ReadableStream> {
+  const primary = (process.env.AI_PROVIDER || "openrouter").toLowerCase();
+  const orderEnv = process.env.AI_PROVIDER_ORDER; // e.g. "openrouter,gemini,local"
+  const fallbackOrder = (orderEnv ? orderEnv.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : ["openrouter", "gemini", "local"]);
+
+  const providers = Array.from(new Set([primary, ...fallbackOrder]));
+  let lastError: string | null = null;
+
+  for (const provider of providers) {
+    if (isProviderBlacklisted(provider)) {
+      console.debug(`Skipping blacklisted provider ${provider}`);
+      continue;
+    }
+
+    try {
+      switch (provider) {
+        case "openrouter":
+          return await streamWithOpenRouter(messages as any, model);
+        case "gemini":
+          return await streamWithGemini(messages as any, model);
+        case "local":
+          return await streamWithLocalModel(messages as any, model);
+        default:
+          throw new Error(`Unknown AI provider: ${provider}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      lastError = `${provider}: ${message}`;
+
+      let status: number | undefined = undefined;
+      const m = message.match(/\b(402|429|404)\b/);
+      if (m) status = Number(m[1]);
+
+      if (status) {
+        markProviderFailed(provider, status, message);
+      } else {
+        markProviderFailed(provider, 500, message);
+      }
+
+      continue;
+    }
+  }
+
+  throw new Error(`All providers failed for streaming. Last error: ${lastError ?? "unknown"}`);
 }
