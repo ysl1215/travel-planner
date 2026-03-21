@@ -38,12 +38,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = buildItineraryPrompt(destination, input, budgetSplit);
+    const fullPrompt = buildItineraryPrompt(destination, input, budgetSplit);
+    // Compute tripDays for a compact short prompt
+    const tripDays = Math.ceil((new Date(input.endDate).getTime() - new Date(input.startDate).getTime()) / (1000 * 60 * 60 * 24));
+
+    const shortPrompt = `You are an expert travel planner. Return a compact JSON object matching the itinerary schema only (no markdown or commentary). Destination: ${destination}. Duration: ${tripDays} days. Travelers: ${input.travelers}. Budget breakdown: travel ${budgetSplit.travel} ${input.currency}, accommodation ${budgetSplit.accommodation} ${input.currency}, food ${budgetSplit.food} ${input.currency}. Liked activities: ${input.likedActivities.join(", ") || "none"}. Travel style: ${input.travelStyle}. Keep output compact and include required fields.`;
+
     // Short-first behavior by default; caller may set expand=true to request a full, higher-token reply
+    const promptToUse = expand ? fullPrompt : shortPrompt;
     const opts = expand ? undefined : { preferShortFirst: true } as any;
     const raw = await generateWithOpenRouter(
       "You are an expert travel planner with deep local knowledge. Always respond with valid JSON only.",
-      prompt,
+      promptToUse,
       preferModel,
       opts
     );
