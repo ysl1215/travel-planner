@@ -11,11 +11,8 @@
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
-// Default model — any model slug from https://openrouter.ai/models works here.
-// The :free suffix selects the free-tier version where available.
-// Override via OPENROUTER_MODEL env var.
-const DEFAULT_MODEL =
-  process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free";
+// Default model — fallback if no env var provided
+const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
 
 type Message = {
   role: "system" | "user" | "assistant";
@@ -39,102 +36,171 @@ function commonHeaders(): Record<string, string> {
   };
 }
 
+function parseModels(preferred?: string): string[] {
+  // OPENROUTER_MODELS should be a comma-separated list of model slugs in preference order.
+  const envList = process.env.OPENROUTER_MODELS?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+  const envModel = process.env.OPENROUTER_MODEL?.trim();
+
+  const candidates: string[] = [];
+  if (preferred) candidates.push(preferred);
+  if (envList.length) candidates.push(...envList);
+  else if (envModel) candidates.push(envModel);
+  else candidates.push(DEFAULT_MODEL);
+
+  // dedupe while preserving order
+  const seen = new Set<string>();
+  return candidates.filter((m) => {
+    if (seen.has(m)) return false;
+    seen.add(m);
+    return true;
+  });
+}
+
+function isRateLimited(status: number, parsedBody?: any) {
+  if (status === 429) return true;
+  const msg = (parsedBody?.error?.message || "").toString().toLowerCase();
+  if (msg.includes("rate-lim") || msg.includes("rate-limited") || msg.includes("temporarily rate-limited")) return true;
+  const raw = (parsedBody?.error?.metadata?.raw || "").toString().toLowerCase();
+  if (raw.includes("rate-limited")) return true;
+  if (parsedBody?.error?.code === 429) return true;
+  return false;
+}
+
 /**
- * Non-streaming completion — returns the full response text.
+ * Non-streaming completion — tries models in order until one succeeds.
  */
 export async function generateWithOpenRouter(
   systemPrompt: string,
   userPrompt: string,
-  model: string = DEFAULT_MODEL
+  model?: string
 ): Promise<string> {
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: commonHeaders(),
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 4096,
-    }),
-  });
+  const models = parseModels(model);
+  let lastError: string | null = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+  for (const candidate of models) {
+    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: commonHeaders(),
+      body: JSON.stringify({
+        model: candidate,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 4096,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return (data.choices?.[0]?.message?.content as string) ?? "";
+    }
+
+    const text = await response.text();
+    let parsed: any = undefined;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      // ignore
+    }
+
+    if (isRateLimited(response.status, parsed)) {
+      lastError = `Model ${candidate} rate-limited (status ${response.status})`;
+      // try next candidate
+      continue;
+    }
+
+    // Non-rate-limit failure — surface to caller
+    throw new Error(`OpenRouter API error ${response.status}: ${text}`);
   }
 
-  const data = await response.json();
-  return (data.choices?.[0]?.message?.content as string) ?? "";
+  throw new Error(`All models failed. Last error: ${lastError ?? "unknown"}`);
 }
 
 /**
- * Streaming completion — returns a ReadableStream of text chunks.
+ * Streaming completion — tries models in order until one returns a streaming response.
  */
 export async function streamWithOpenRouter(
   messages: Message[],
-  model: string = DEFAULT_MODEL
+  model?: string
 ): Promise<ReadableStream> {
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: commonHeaders(),
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.7,
-      max_tokens: 2048,
-      stream: true,
-    }),
-  });
+  const models = parseModels(model);
+  let lastError: string | null = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
-  }
+  for (const candidate of models) {
+    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: commonHeaders(),
+      body: JSON.stringify({
+        model: candidate,
+        messages,
+        temperature: 0.7,
+        max_tokens: 2048,
+        stream: true,
+      }),
+    });
 
-  const encoder = new TextEncoder();
-  const body = response.body;
-  if (!body) throw new Error("OpenRouter returned empty response body");
-
-  // Parse the SSE stream and forward raw text chunks
-  return new ReadableStream({
-    async start(controller) {
-      const reader = body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
+    if (!response.ok) {
+      const text = await response.text();
+      let parsed: any = undefined;
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        parsed = JSON.parse(text);
+      } catch (e) {
+        // ignore
+      }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
+      if (isRateLimited(response.status, parsed)) {
+        lastError = `Model ${candidate} rate-limited (status ${response.status})`;
+        continue; // try next model
+      }
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) continue;
-            const jsonStr = trimmed.slice(5).trim();
-            if (jsonStr === "[DONE]") continue;
+      throw new Error(`OpenRouter API error ${response.status}: ${text}`);
+    }
 
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const text: string = parsed.choices?.[0]?.delta?.content ?? "";
-              if (text) {
-                controller.enqueue(encoder.encode(text));
+    const body = response.body;
+    if (!body) throw new Error("OpenRouter returned empty response body");
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    // Parse the SSE stream and forward raw text chunks
+    return new ReadableStream({
+      async start(controller) {
+        const reader = body.getReader();
+        let buffer = "";
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr === "[DONE]") continue;
+
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const text: string = parsed.choices?.[0]?.delta?.content ?? "";
+                if (text) controller.enqueue(encoder.encode(text));
+              } catch (e) {
+                // ignore malformed SSE lines
               }
-            } catch {
-              // ignore malformed SSE lines
             }
           }
+        } finally {
+          reader.releaseLock();
+          controller.close();
         }
-      } finally {
-        reader.releaseLock();
-        controller.close();
-      }
-    },
-  });
+      },
+    });
+  }
+
+  throw new Error(`All models failed for streaming. Last error: ${lastError ?? "unknown"}`);
 }
