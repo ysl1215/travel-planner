@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
-import path from "path";
 import { FlightOffer } from "@/lib/types";
+import { lookupFlightPrices } from "@/lib/flightPrices";
+import { summarizeGoogleFlightsError } from "@/lib/googleFlightsErrors";
+import { normalizeFlightPreference } from "@/lib/flightPreferences";
+import { resolveAirportCode } from "@/lib/airports";
 
 /**
  * GET /api/prices
@@ -19,6 +21,8 @@ import { FlightOffer } from "@/lib/types";
  *   adults      — integer, default 1
  *   seat        — economy | premium-economy | business | first
  *   currency    — e.g. USD (default)
+ *   preference  — cheapest | fewest-stops | nonstop | fastest
+ *   destinationAirport — optional override IATA code when a city needs a specific airport
  *
  * Prerequisites (server-side only):
  *   pip install fast-flights
@@ -33,6 +37,8 @@ export async function GET(request: NextRequest) {
   const adults = searchParams.get("adults") ?? "1";
   const seat = searchParams.get("seat") ?? "economy";
   const currency = searchParams.get("currency") ?? "USD";
+  const preference = normalizeFlightPreference(searchParams.get("preference"));
+  const destinationAirport = resolveAirportCode(destination, searchParams.get("destinationAirport")) ?? destination;
 
   if (!origin || !destination || !departure) {
     return NextResponse.json(
@@ -42,22 +48,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await runFlightScript({
+    const result = await lookupFlightPrices({
       origin,
-      destination,
+      destination: destinationAirport,
       departure,
       returnDate: returnDate || undefined,
       adults: parseInt(adults, 10),
       seat: seat as "economy" | "premium-economy" | "business" | "first",
       currency,
+      preference,
     });
 
-    if (result.error && !result.flights.length) {
-      return NextResponse.json(
-        { error: result.error, flights: [] },
-        { status: 502 }
-      );
-    }
+    const summarizedError = result.error ? summarizeGoogleFlightsError(result.error) : null;
 
     const flights: FlightOffer[] = result.flights.map((f) => ({
       airline: f.airline,
@@ -74,101 +76,20 @@ export async function GET(request: NextRequest) {
       isBest: f.is_best ?? false,
     }));
 
+    const status = summarizedError?.kind === "scrape_failure" && flights.length === 0 ? 502 : 200;
+
     return NextResponse.json({
       flights,
       currentPriceLevel: result.current_price_level,
-      error: result.error ?? null,
-    });
+      error: summarizedError?.message ?? null,
+      errorType: summarizedError?.kind ?? null,
+      fromCache: result.fromCache,
+      preference,
+      destinationAirport,
+    }, { status });
   } catch (err) {
     console.error("Prices API error:", err);
     const message = err instanceof Error ? err.message : "Failed to fetch prices";
     return NextResponse.json({ error: message, flights: [] }, { status: 500 });
   }
-}
-
-// ─── Python subprocess helper ────────────────────────────────────────────────
-
-interface ScriptArgs {
-  origin: string;
-  destination: string;
-  departure: string;
-  returnDate?: string;
-  adults: number;
-  seat: "economy" | "premium-economy" | "business" | "first";
-  currency: string;
-}
-
-interface ScriptFlight {
-  airline: string;
-  origin: string;
-  destination: string;
-  departure_date: string;
-  return_date: string | null;
-  departure_time: string;
-  arrival_time: string;
-  duration: string;
-  stops: number | string;
-  delay: string | null;
-  price: number;
-  currency: string;
-  is_best: boolean;
-}
-
-interface ScriptResult {
-  flights: ScriptFlight[];
-  current_price_level: string;
-  error: string | null;
-}
-
-function runFlightScript(args: ScriptArgs): Promise<ScriptResult> {
-  return new Promise((resolve, reject) => {
-    const scriptPath = path.join(process.cwd(), "scripts", "google_flights.py");
-
-    const pyArgs = [
-      scriptPath,
-      "--origin", args.origin,
-      "--destination", args.destination,
-      "--departure", args.departure,
-      "--adults", String(args.adults),
-      "--seat", args.seat,
-      "--currency", args.currency,
-    ];
-
-    if (args.returnDate) {
-      pyArgs.push("--return", args.returnDate);
-    }
-
-    const py = spawn("python3", pyArgs, {
-      timeout: 15_000, // 15-second timeout
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    py.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    py.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    py.on("close", (code) => {
-      if (!stdout.trim()) {
-        reject(
-          new Error(
-            `google_flights.py produced no output (exit ${code}). ` +
-            `Are Python 3 and fast-flights installed? stderr: ${stderr.slice(0, 200)}`
-          )
-        );
-        return;
-      }
-
-      try {
-        const parsed: ScriptResult = JSON.parse(stdout.trim());
-        resolve(parsed);
-      } catch {
-        reject(new Error(`Failed to parse script output as JSON: ${stdout.slice(0, 200)}`));
-      }
-    });
-
-    py.on("error", (err) => {
-      reject(new Error(`Failed to spawn python3: ${err.message}. Make sure Python 3 is installed.`));
-    });
-  });
 }

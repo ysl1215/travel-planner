@@ -82,6 +82,26 @@ python -m pip install fast-flights
 # Without this, the "Check live prices" button shows an error — everything else works fine.
 ```
 
+### 3b. (Optional) Use a local model server
+
+If you want the app to prefer a local Ollama endpoint, set:
+
+```bash
+LOCAL_MODEL_URL=http://127.0.0.1:11434/api/generate
+LOCAL_MODEL=qwen3:latest
+AI_PROVIDER=local
+```
+
+The local client will POST `{ system, prompt, model, max_tokens }`, will auto-detect a model from Ollama when possible, and understands common JSON response shapes.
+
+You can sanity-check a configured provider from the terminal:
+
+```bash
+node scripts/provider-probe.js openrouter
+node scripts/provider-probe.js gemini
+node scripts/provider-probe.js local
+```
+
 ### 4. Start the dev server
 
 ```bash
@@ -111,7 +131,7 @@ Click **"Try Demo"** on the landing page to load a pre-built sample trip (London
 - **Activity preferences** — activities you love & want to de-prioritise
 - **Travel mode** — Flight, Train, Rental Car, Bus, Cruise
 - **Travel style** — Budget Backpacker to Luxury
-- **Optional**: preferred country/region, max travel time from home
+- **Optional**: preferred country/region, max travel time from home, live flight verification, and flight priority for live fare checks
 
 ### 2. AI Destination Suggestions
 - 4–6 personalized destinations tailored to your budget & preferences
@@ -134,7 +154,10 @@ Click **"Try Demo"** on the landing page to load a pre-built sample trip (London
 - Four tabs: Itinerary · Attractions · Food · Practical Tips
 
 ### 5. Live Flight Prices (Google Flights)
-- **"Check live prices"** button on each destination card
+- Planner toggle to verify flight time with live Google Flights search before filtering destinations
+- **"Check live prices"** button on each destination card, with airport-code override for cities that need it
+- Flight priority selector to sort live fares by cheapest, nonstop, fastest, or fewest-stops
+- Live fare cards show airline, route, timing, stops, and total fare
 - Scraped in real-time from Google Flights via [fast-flights](https://github.com/AWeirdDev/flights) — **no API key needed**
 - Shows airline, times, duration, stops, best-fare highlight
 - Requires Python 3 + `pip install fast-flights` on the server

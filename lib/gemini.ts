@@ -12,16 +12,38 @@
 const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? "gemini-1";
 
 type GeminiOpts = { preferShortFirst?: boolean; tokenCandidates?: number[] };
+type GeminiCandidateContent = string | Array<{ text?: string }>;
+type GeminiResponse = {
+  output_text?: string;
+  text?: string;
+  candidates?: Array<{ content?: GeminiCandidateContent }>;
+  output?: Array<{ content?: Array<{ text?: string }> }>;
+  choices?: Array<{ message?: { content?: string }; text?: string; delta?: { content?: string } }>;
+  result?: string;
+  delta?: { content?: string };
+};
+type GeminiRequestBody = Record<string, unknown>;
 
-function extractText(parsed: any, rawText: string): string | null {
+function extractCandidateContent(content: GeminiCandidateContent | undefined): string | null {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      return part.text ?? "";
+    })
+    .join("");
+}
+
+function extractText(parsed: GeminiResponse | null, rawText: string): string | null {
   if (!parsed) return rawText || null;
   // Common response shapes
   if (typeof parsed.output_text === 'string') return parsed.output_text;
   if (typeof parsed.text === 'string') return parsed.text;
   if (parsed?.candidates?.[0]?.content) {
     const c = parsed.candidates[0].content;
-    if (typeof c === 'string') return c;
-    if (Array.isArray(c)) return c.map((p: any) => (typeof p === 'string' ? p : p.text ?? '')).join('');
+    const extracted = extractCandidateContent(c);
+    if (extracted) return extracted;
   }
   if (parsed?.output?.[0]?.content?.[0]?.text) return parsed.output[0].content[0].text;
   if (parsed?.choices?.[0]?.message?.content) return parsed.choices[0].message.content;
@@ -34,7 +56,7 @@ export async function generateWithGemini(
   systemPrompt: string,
   userPrompt: string,
   model?: string,
-  opts?: GeminiOpts
+  opts?: GeminiOpts & { temperature?: number }
 ): Promise<string> {
   const modelToUse = model ?? DEFAULT_MODEL;
   const apiUrl = process.env.GEMINI_API_URL?.trim();
@@ -52,7 +74,7 @@ export async function generateWithGemini(
     try {
       let url: string;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      let body: any;
+      let body: GeminiRequestBody;
 
       if (apiUrl) {
         // Generic user-supplied Gemini-compatible endpoint
@@ -61,7 +83,7 @@ export async function generateWithGemini(
         body = {
           model: modelToUse,
           input: { text: `${systemPrompt}\n\n${userPrompt}` },
-          temperature: 0.7,
+          temperature: opts?.temperature ?? 0.7,
           max_output_tokens: maxTokens,
         };
       } else {
@@ -72,16 +94,16 @@ export async function generateWithGemini(
         body = {
           input: { text: `${systemPrompt}\n\n${userPrompt}` },
           maxOutputTokens: maxTokens,
-          temperature: 0.7,
+          temperature: opts?.temperature ?? 0.7,
         };
       }
 
       const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       const raw = await res.text();
-      let parsed: any = null;
+      let parsed: GeminiResponse | null = null;
       try {
-        parsed = JSON.parse(raw);
-      } catch (e) {
+        parsed = JSON.parse(raw) as GeminiResponse;
+      } catch {
         // ignore
       }
 
@@ -135,7 +157,7 @@ export async function streamWithGemini(messages: { role: string; content: string
     try {
       let url: string;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      let body: any;
+      let body: GeminiRequestBody;
 
       if (apiUrl) {
         url = apiUrl;
@@ -210,13 +232,13 @@ export async function streamWithGemini(messages: { role: string; content: string
                 if (!jsonStr) continue;
 
                 try {
-                  const parsed = JSON.parse(jsonStr);
-                  // try multiple locations for incremental content
-                  const textChunk = parsed?.choices?.[0]?.delta?.content ?? parsed?.delta?.content ?? parsed?.output?.[0]?.content?.[0]?.text ?? parsed?.candidates?.[0]?.content ?? parsed?.text ?? null;
+                   const parsed = JSON.parse(jsonStr) as GeminiResponse;
+                   // try multiple locations for incremental content
+                   const textChunk = parsed?.choices?.[0]?.delta?.content ?? parsed?.delta?.content ?? parsed?.output?.[0]?.content?.[0]?.text ?? extractCandidateContent(parsed?.candidates?.[0]?.content) ?? parsed?.text ?? null;
                   if (textChunk) controller.enqueue(encoder.encode(String(textChunk)));
-                } catch (e) {
-                  // ignore non-json chunks
-                }
+                 } catch {
+                   // ignore non-json chunks
+                 }
               }
             }
           } finally {
@@ -225,7 +247,7 @@ export async function streamWithGemini(messages: { role: string; content: string
           }
         },
       });
-    } catch (err) {
+    } catch {
       // try next token budget
       continue;
     }

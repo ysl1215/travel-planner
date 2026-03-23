@@ -8,6 +8,7 @@ import ItineraryView from "@/components/ItineraryView";
 import ChatAgent from "@/components/ChatAgent";
 import { TripPlannerInput, Destination, BudgetSplit, TripItinerary } from "@/lib/types";
 import { cityToAirport } from "@/lib/airports";
+import { formatFlightPreferenceLabel } from "@/lib/flightPreferences";
 import { ArrowLeft, MapPin, Sparkles, PlayCircle } from "lucide-react";
 
 type AppStep = "form" | "destinations" | "itinerary";
@@ -264,6 +265,10 @@ export default function Home() {
                 Based on your {tripInput.budget.toLocaleString()} {tripInput.currency} budget from{" "}
                 {tripInput.homeCity}. Select up to 2 to narrow down, then generate a full itinerary.
               </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Live price checks will sort each destination by{" "}
+                <span className="font-medium">{formatFlightPreferenceLabel(tripInput.flightPreference)}</span>.
+              </p>
               {destinations.some((d) => d.id === "lisbon") && (
                 <div className="inline-flex items-center gap-1.5 mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-3 py-1">
                   <PlayCircle className="w-3.5 h-3.5" />
@@ -295,6 +300,7 @@ export default function Home() {
                   returnDate={tripInput.endDate || undefined}
                   adults={tripInput.travelers}
                   currency={tripInput.currency}
+                  flightPreference={tripInput.flightPreference}
                 />
               ))}
             </div>

@@ -11,8 +11,12 @@ export interface TripPlannerInput {
   travelMode: string[];
   country?: string;
   maxTravelHours?: number;
+  checkLiveFlightPrices?: boolean;
+  flightPreference?: FlightPreference;
   travelStyle: string;
 }
+
+export type FlightPreference = "cheapest" | "fewest-stops" | "nonstop" | "fastest";
 
 export interface Destination {
   id: string;
@@ -22,6 +26,7 @@ export interface Destination {
   rationale: string;
   highlights: string[];
   estimatedFlightHours: number;
+  verifiedThroughLiveSearch?: boolean;
   estimatedBudgetFit: "excellent" | "good" | "stretch";
   bestTimeToVisit: string;
   vibeMatch: string[];

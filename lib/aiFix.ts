@@ -4,12 +4,12 @@
 
 import { generate } from "@/lib/ai";
 
-export async function requestJsonCorrection(
+export function buildJsonCorrectionPrompts(
   invalidJson: string,
-  ajvErrors: any,
+  ajvErrors: unknown,
   schemaName: string,
   extra?: string
-): Promise<string> {
+): { systemPrompt: string; userPrompt: string } {
   const systemPrompt =
     "You are a JSON fixer assistant. Given invalid JSON and validation errors, produce a corrected JSON matching the expected structure. Output ONLY the corrected JSON — no explanation, no markdown, no code fences.";
 
@@ -17,6 +17,16 @@ export async function requestJsonCorrection(
 
   if (extra) userPrompt += `\n\n${extra}`;
 
-  const fixed = await generate(systemPrompt, userPrompt);
-  return fixed;
+  return { systemPrompt, userPrompt };
+}
+
+export async function requestJsonCorrection(
+  invalidJson: string,
+  ajvErrors: unknown,
+  schemaName: string,
+  extra?: string,
+  generateFn: typeof generate = generate
+): Promise<string> {
+  const { systemPrompt, userPrompt } = buildJsonCorrectionPrompts(invalidJson, ajvErrors, schemaName, extra);
+  return generateFn(systemPrompt, userPrompt);
 }

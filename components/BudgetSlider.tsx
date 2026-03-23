@@ -1,6 +1,4 @@
 "use client";
-
-import { useState } from "react";
 import { BudgetSplit } from "@/lib/types";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 

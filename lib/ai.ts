@@ -11,7 +11,15 @@ import { generateWithOpenRouter, streamWithOpenRouter } from "@/lib/openrouter";
 import { generateWithGemini, streamWithGemini } from "@/lib/gemini";
 import { generateWithLocalModel, streamWithLocalModel } from "@/lib/localModel";
 
-type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[] };
+type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number };
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+function getProviderModel(provider: string, model?: string) {
+  if (!model?.trim()) return undefined;
+  if (provider === "openrouter") return model.includes("/") ? model : undefined;
+  if (provider === "gemini") return model.toLowerCase().startsWith("gemini") ? model : undefined;
+  return model;
+}
 
 // Provider health cache to avoid retrying known-bad providers for a TTL
 const DEFAULT_PROVIDER_HEALTH_TTL_MS = Number(process.env.AI_PROVIDER_HEALTH_TTL_MS ?? "60000");
@@ -67,11 +75,11 @@ export async function generate(
     try {
       switch (provider) {
         case "openrouter":
-          return await generateWithOpenRouter(systemPrompt, userPrompt, model, opts as any);
+          return await generateWithOpenRouter(systemPrompt, userPrompt, getProviderModel(provider, model), opts);
         case "gemini":
-          return await generateWithGemini(systemPrompt, userPrompt, model, opts as any);
+          return await generateWithGemini(systemPrompt, userPrompt, getProviderModel(provider, model), opts);
         case "local":
-          return await generateWithLocalModel(systemPrompt, userPrompt, model, opts as any);
+          return await generateWithLocalModel(systemPrompt, userPrompt, getProviderModel(provider, model), opts);
         default:
           throw new Error(`Unknown AI provider: ${provider}`);
       }
@@ -99,7 +107,7 @@ export async function generate(
   throw new Error(`All providers failed. Last error: ${lastError ?? "unknown"}`);
 }
 
-export async function stream(messages: any[], model?: string): Promise<ReadableStream> {
+export async function stream(messages: ChatMessage[], model?: string): Promise<ReadableStream> {
   const primary = (process.env.AI_PROVIDER || "openrouter").toLowerCase();
   const orderEnv = process.env.AI_PROVIDER_ORDER; // e.g. "openrouter,gemini,local"
   const fallbackOrder = (orderEnv ? orderEnv.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : ["openrouter", "gemini", "local"]);
@@ -116,11 +124,11 @@ export async function stream(messages: any[], model?: string): Promise<ReadableS
     try {
       switch (provider) {
         case "openrouter":
-          return await streamWithOpenRouter(messages as any, model);
+          return await streamWithOpenRouter(messages, getProviderModel(provider, model));
         case "gemini":
-          return await streamWithGemini(messages as any, model);
+          return await streamWithGemini(messages, getProviderModel(provider, model));
         case "local":
-          return await streamWithLocalModel(messages as any, model);
+          return await streamWithLocalModel(messages, getProviderModel(provider, model));
         default:
           throw new Error(`Unknown AI provider: ${provider}`);
       }

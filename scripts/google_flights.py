@@ -26,6 +26,35 @@ Install requirements:
 import argparse
 import json
 import sys
+import re
+
+
+def summarize_error_message(message: str) -> str:
+    cleaned = re.sub(r"\s+", " ", message).strip()
+    if not cleaned:
+        return "Google Flights could not return results right now."
+
+    lower = cleaned.lower()
+    no_flights = "no flights found" in lower
+    htmlish = (
+        "<html" in lower
+        or "<!doctype" in lower
+        or "skip to main content" in lower
+        or "accessibility feedback" in lower
+        or "loading results" in lower
+        or "flight search" in lower
+    )
+
+    if no_flights and not htmlish:
+        return "No flights found for these dates."
+
+    if no_flights or htmlish:
+        return "Google Flights temporarily returned an unusable response. Try again later or change the dates."
+
+    if len(cleaned) > 220:
+        return cleaned[:217] + "..."
+
+    return cleaned
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape Google Flights via fast-flights")
@@ -37,6 +66,9 @@ def main():
     parser.add_argument("--seat",        default="economy",
                         choices=["economy", "premium-economy", "business", "first"])
     parser.add_argument("--currency",    default="USD", help="Currency code, e.g. USD, EUR, GBP")
+    parser.add_argument("--fetch-mode",   default="common",
+                        choices=["common", "fallback", "force-fallback", "local"],
+                        help="fast-flights fetch mode")
     args = parser.parse_args()
 
     try:
@@ -78,7 +110,7 @@ def main():
             trip=trip,
             passengers=Passengers(adults=args.adults),
             seat=args.seat,
-            fetch_mode="common",
+            fetch_mode=args.fetch_mode,
         )
 
         flights = []
@@ -115,14 +147,10 @@ def main():
         }))
 
     except RuntimeError as e:
-        msg = str(e)
-        # Truncate very long error messages (HTML dumps)
-        if len(msg) > 500:
-            msg = msg[:500] + "... [truncated]"
         print(json.dumps({
             "flights": [],
             "current_price_level": "",
-            "error": f"Google Flights scraping failed: {msg}",
+            "error": summarize_error_message(str(e)),
         }))
 
     except (KeyError, ValueError, AttributeError, TypeError) as e:

@@ -18,6 +18,20 @@ type Message = {
   role: "system" | "user" | "assistant";
   content: string;
 };
+type OpenRouterErrorResponse = {
+  error?: {
+    message?: string;
+    metadata?: { raw?: string };
+    code?: number;
+  };
+};
+type OpenRouterSuccessResponse = {
+  choices?: Array<{
+    message?: { content?: string };
+    delta?: { content?: string };
+    text?: string;
+  }>;
+};
 
 function getApiKey(): string {
   const key = process.env.OPENROUTER_API_KEY;
@@ -95,7 +109,7 @@ function prioritizeModels(models: string[]) {
   return [...healthy, ...blacklisted];
 }
 
-function shouldSkipModel(status: number, parsedBody?: any) {
+function shouldSkipModel(status: number, parsedBody?: OpenRouterErrorResponse | null) {
   // Treat rate limits, explicit 'no endpoints' (model not available),
   // and insufficient credits (402) as retryable so we can fall back to other models.
   if (status === 429) return true;
@@ -122,7 +136,7 @@ export async function generateWithOpenRouter(
   systemPrompt: string,
   userPrompt: string,
   model?: string,
-  opts?: { preferShortFirst?: boolean; tokenCandidates?: number[] }
+  opts?: { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number }
 ): Promise<string> {
   const rawModels = parseModels(model);
   const models = prioritizeModels(rawModels);
@@ -144,21 +158,22 @@ export async function generateWithOpenRouter(
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          temperature: 0.7,
+          temperature: opts?.temperature ?? 0.7,
           max_tokens: maxTokens,
         }),
       });
 
       if (response.ok) {
-        const data = await response.json();
-        return (data.choices?.[0]?.message?.content as string) ?? "";
+        const data = (await response.json()) as OpenRouterSuccessResponse;
+        const content = data.choices?.[0]?.message?.content;
+        return typeof content === "string" ? content : "";
       }
 
       const text = await response.text();
-      let parsed: any = undefined;
+      let parsed: OpenRouterErrorResponse | null = null;
       try {
-        parsed = JSON.parse(text);
-      } catch (e) {
+        parsed = JSON.parse(text) as OpenRouterErrorResponse;
+      } catch {
         // ignore
       }
 
@@ -222,10 +237,10 @@ export async function streamWithOpenRouter(
 
       if (!response.ok) {
         const text = await response.text();
-        let parsed: any = undefined;
+        let parsed: OpenRouterErrorResponse | null = null;
         try {
-          parsed = JSON.parse(text);
-        } catch (e) {
+          parsed = JSON.parse(text) as OpenRouterErrorResponse;
+        } catch {
           // ignore
         }
 
@@ -274,7 +289,7 @@ export async function streamWithOpenRouter(
                   const parsed = JSON.parse(jsonStr);
                   const text: string = parsed.choices?.[0]?.delta?.content ?? "";
                   if (text) controller.enqueue(encoder.encode(text));
-                } catch (e) {
+                } catch {
                   // ignore malformed SSE lines
                 }
               }

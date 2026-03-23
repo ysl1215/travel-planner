@@ -62,7 +62,21 @@ export default function ChatAgent({ tripContext, destination }: ChatAgentProps) 
       });
 
       if (!response.ok) {
-        throw new Error("Chat request failed");
+        const errorText = await response.text();
+        let message = "Chat request failed";
+
+        try {
+          const parsed = JSON.parse(errorText) as { error?: string };
+          if (typeof parsed.error === "string" && parsed.error.trim()) {
+            message = parsed.error.trim();
+          }
+        } catch {
+          if (errorText.trim()) {
+            message = errorText.trim();
+          }
+        }
+
+        throw new Error(message);
       }
 
       const reader = response.body?.getReader();
@@ -92,12 +106,13 @@ export default function ChatAgent({ tripContext, destination }: ChatAgentProps) 
           }
         }
       }
-    } catch (error) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sorry, I encountered an error.";
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "Sorry, I encountered an error. Please check that the OPENROUTER_API_KEY is configured correctly.",
+          content: `Sorry, I encountered an error: ${message}`,
           timestamp: new Date(),
         },
       ]);

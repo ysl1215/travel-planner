@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { TripPlannerInput } from "@/lib/types";
-import { MapPin, DollarSign, Calendar, Users, Heart, Ban, Train, Sliders } from "lucide-react";
+import { MapPin, DollarSign, Users, Heart, Ban, Train, Sliders, Plane } from "lucide-react";
+import { FLIGHT_PREFERENCE_OPTIONS } from "@/lib/flightPreferences";
 
 const ACTIVITY_OPTIONS = [
   "Beach & Swimming", "Hiking & Trekking", "Cultural Sites", "Museums",
@@ -37,6 +38,8 @@ export default function TripPlannerForm({ onSubmit, isLoading }: TripPlannerForm
     travelMode: ["Flight"],
     country: "",
     maxTravelHours: undefined,
+    checkLiveFlightPrices: true,
+    flightPreference: "cheapest",
     travelStyle: "Mid-range Comfort",
   });
 
@@ -180,7 +183,6 @@ export default function TripPlannerForm({ onSubmit, isLoading }: TripPlannerForm
         <div className="flex flex-wrap gap-2">
           {ACTIVITY_OPTIONS.map((activity) => {
             const liked = form.likedActivities.includes(activity);
-            const disliked = form.dislikedActivities.includes(activity);
             return (
               <div key={activity} className="flex gap-1">
                 <button
@@ -300,6 +302,47 @@ export default function TripPlannerForm({ onSubmit, isLoading }: TripPlannerForm
               className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-sky-100 bg-sky-50/70 p-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.checkLiveFlightPrices ?? true}
+              onChange={(e) => setForm({ ...form, checkLiveFlightPrices: e.target.checked })}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Check live flight prices</span>
+              <span className="block text-xs text-gray-500 mt-1">
+                Use Google Flights to verify flight times before filtering destinations. Recommended when you set a
+                max travel time.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <Plane className="mt-1 h-4 w-4 text-indigo-600" />
+            <div className="flex-1">
+              <span className="block text-sm font-medium text-gray-900">Flight priority for live fare checks</span>
+              <span className="block text-xs text-gray-500 mt-1 mb-3">
+                Use this to sort the live flight results for each destination by what matters most to you.
+              </span>
+              <select
+                value={form.flightPreference ?? "cheapest"}
+                onChange={(e) => setForm({ ...form, flightPreference: e.target.value as TripPlannerInput["flightPreference"] })}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {FLIGHT_PREFERENCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </label>
         </div>
       </div>
 

@@ -14,6 +14,7 @@ export const DEMO_INPUT: TripPlannerInput = {
   travelMode: ["Flight"],
   country: "",
   maxTravelHours: 10,
+  checkLiveFlightPrices: true,
   travelStyle: "Mid-range Comfort",
 };
 

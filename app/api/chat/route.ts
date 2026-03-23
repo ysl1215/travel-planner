@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stream } from "@/lib/ai";
+import { stream as streamAI } from "@/lib/ai";
 import { buildChatSystemPrompt } from "@/lib/prompts";
 import { TripPlannerInput } from "@/lib/types";
 
@@ -21,12 +21,12 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = buildChatSystemPrompt(tripContext ?? null, destination);
 
-    const stream = await streamWithOpenRouter([
+    const responseStream = await streamAI([
       { role: "system", content: systemPrompt },
       ...messages,
     ]);
 
-    return new NextResponse(stream, {
+    return new NextResponse(responseStream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Transfer-Encoding": "chunked",

@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Destination, FlightOffer } from "@/lib/types";
-import { cityToAirport } from "@/lib/airports";
+import { resolveAirportCode } from "@/lib/airports";
 import { Globe, Clock, TrendingUp, CheckCircle, Plane, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { GoogleFlightsErrorKind } from "@/lib/googleFlightsErrors";
+import { FlightPreference } from "@/lib/types";
+import { formatFlightPreferenceLabel } from "@/lib/flightPreferences";
 
 interface DestinationCardProps {
   destination: Destination;
@@ -21,6 +24,7 @@ interface DestinationCardProps {
   adults?: number;
   /** Currency */
   currency?: string;
+  flightPreference?: FlightPreference;
 }
 
 const budgetFitColors = {
@@ -47,22 +51,38 @@ export default function DestinationCard({
   returnDate,
   adults = 1,
   currency = "USD",
+  flightPreference = "cheapest",
 }: DestinationCardProps) {
   const [priceData, setPriceData] = useState<{
     flights: FlightOffer[];
     priceLevel: string;
     error: string | null;
+    errorType: GoogleFlightsErrorKind | null;
   } | null>(null);
   const [loadingPrices, setLoadingPrices] = useState(false);
   const [showPrices, setShowPrices] = useState(false);
+  const [destinationAirportInput, setDestinationAirportInput] = useState("");
 
-  // Derive destination airport code
-  const destAirport = cityToAirport(destination.city);
+  const resolvedDestinationAirport = resolveAirportCode(destination.city, destinationAirportInput);
 
-  const canFetchPrices = !!(originAirport && destAirport && departureDate);
+  const canShowLivePrices = !!(originAirport && departureDate);
+  const canFetchPrices = !!(originAirport && departureDate && resolvedDestinationAirport);
+
+  useEffect(() => {
+    setDestinationAirportInput(resolveAirportCode(destination.city) ?? "");
+  }, [destination.city]);
+
+  useEffect(() => {
+    setPriceData(null);
+    setShowPrices(false);
+  }, [destination.city, originAirport, departureDate, returnDate, adults, currency, flightPreference]);
 
   const handleFetchPrices = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!originAirport || !departureDate || !resolvedDestinationAirport) {
+      setShowPrices(true);
+      return;
+    }
     if (priceData) {
       setShowPrices((v) => !v);
       return;
@@ -71,11 +91,13 @@ export default function DestinationCard({
     setShowPrices(true);
     try {
       const params = new URLSearchParams({
-        origin: originAirport!,
-        destination: destAirport!,
-        departure: departureDate!,
+        origin: originAirport,
+        destination: resolvedDestinationAirport,
+        destinationAirport: resolvedDestinationAirport,
+        departure: departureDate,
         adults: String(adults),
         currency,
+        preference: flightPreference,
       });
       if (returnDate) params.set("return", returnDate);
 
@@ -86,12 +108,14 @@ export default function DestinationCard({
         flights: data.flights ?? [],
         priceLevel: data.currentPriceLevel ?? "",
         error: data.error ?? null,
+        errorType: data.errorType ?? null,
       });
     } catch (err) {
       setPriceData({
         flights: [],
         priceLevel: "",
         error: err instanceof Error ? err.message : "Failed to fetch prices",
+        errorType: "scrape_failure",
       });
     } finally {
       setLoadingPrices(false);
@@ -134,6 +158,11 @@ export default function DestinationCard({
             <Clock className="w-4 h-4" />
             <span>~{destination.estimatedFlightHours}h flight</span>
           </div>
+          {destination.verifiedThroughLiveSearch && (
+            <span className="text-[11px] font-semibold bg-emerald-500/20 text-emerald-200 rounded-full px-2 py-0.5">
+              Verified through live search
+            </span>
+          )}
           <div className="flex items-center gap-1">
             <TrendingUp className="w-4 h-4" />
             <span>{destination.bestTimeToVisit}</span>
@@ -180,11 +209,27 @@ export default function DestinationCard({
         </div>
 
         {/* Live Flight Prices */}
-        {canFetchPrices && (
+        {canShowLivePrices && (
           <div className="mb-4">
+            <div className="mb-2">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                Destination airport code
+              </label>
+              <input
+                value={destinationAirportInput}
+                onChange={(e) => setDestinationAirportInput(e.target.value.toUpperCase())}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Auto-detected or type IATA code"
+                className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              />
+              <p className="mt-1 text-[11px] text-gray-500">
+                If the city has multiple airports, enter the one you want to price.
+              </p>
+            </div>
             <button
               onClick={handleFetchPrices}
-              className="w-full flex items-center justify-between text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 hover:bg-sky-100 transition-colors"
+              disabled={!canFetchPrices}
+              className="w-full flex items-center justify-between text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 hover:bg-sky-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span className="flex items-center gap-1.5">
                 {loadingPrices ? (
@@ -195,8 +240,10 @@ export default function DestinationCard({
                 {loadingPrices
                   ? "Fetching live prices…"
                   : priceData
-                  ? `Live prices (${originAirport} → ${destAirport})`
-                  : `Check live prices (${originAirport} → ${destAirport})`}
+                  ? `Live prices (${originAirport} → ${resolvedDestinationAirport}) · ${formatFlightPreferenceLabel(flightPreference)}`
+                  : canFetchPrices
+                  ? `Check live prices (${originAirport} → ${resolvedDestinationAirport}) · ${formatFlightPreferenceLabel(flightPreference)}`
+                  : "Enter destination airport code to check live prices"}
               </span>
               {priceData && !loadingPrices && (
                 showPrices ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />
@@ -206,8 +253,15 @@ export default function DestinationCard({
             {showPrices && priceData && (
               <div className="mt-2 space-y-1.5">
                 {priceData.error && (
-                  <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                    ⚠ {priceData.error}
+                  <p
+                    className={`text-xs rounded-lg px-3 py-2 ${
+                      priceData.errorType === "no_flights"
+                        ? "text-amber-700 bg-amber-50"
+                        : "text-red-600 bg-red-50"
+                    }`}
+                  >
+                    {priceData.errorType === "no_flights" ? "ℹ " : "⚠ "}
+                    {priceData.error}
                   </p>
                 )}
                 {priceData.priceLevel && (
@@ -215,6 +269,12 @@ export default function DestinationCard({
                     Price level: <span className="font-medium">{priceData.priceLevel}</span>
                   </p>
                 )}
+                <p className="text-xs text-gray-500 px-1">
+                  Google Flights prices are shown as the total fare, which typically includes taxes and fees.
+                </p>
+                <p className="text-xs text-gray-500 px-1">
+                  Sorted by <span className="font-medium">{formatFlightPreferenceLabel(flightPreference)}</span>
+                </p>
                 {priceData.flights.slice(0, 4).map((f, i) => (
                   <div
                     key={i}
@@ -225,10 +285,15 @@ export default function DestinationCard({
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-gray-800">{f.airline}</span>
                       <span className="font-bold text-gray-900">
-                        {currency} {f.price > 0 ? f.price.toLocaleString() : "—"}
+                        Total {currency} {f.price > 0 ? f.price.toLocaleString() : "—"}
                       </span>
                     </div>
                     <div className="text-gray-500 mt-0.5">
+                      {f.origin} → {f.destination}
+                      {" · "}
+                      {f.departureDate}
+                      {f.returnDate ? ` → ${f.returnDate}` : ""}
+                      {" · "}
                       {f.departureTime && f.arrivalTime
                         ? `${f.departureTime} → ${f.arrivalTime} · `
                         : ""}

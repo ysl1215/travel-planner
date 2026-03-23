@@ -1,7 +1,25 @@
 import { TripPlannerInput } from "./types";
+import { formatTravelHintBlock, TravelHint } from "./travelHints";
 
-export function buildDestinationPrompt(input: TripPlannerInput): string {
-  return `You are an expert travel planner. Based on the following user preferences, suggest 4-6 destinations that would be a great fit.
+const DAY_MS = 1000 * 60 * 60 * 24;
+
+export function calculateTripDays(startDate: string, endDate: string): number {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 1;
+  }
+
+  return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / DAY_MS));
+}
+
+export function buildDestinationPrompt(
+  input: TripPlannerInput,
+  originAirport?: string,
+  travelHint?: TravelHint | null
+): string {
+  return `You are an expert travel planner. Based on the following user preferences, suggest 8-10 destinations that would be a great fit.
 
 User Preferences:
 - Total Budget: ${input.budget} ${input.currency} for ${input.travelers} traveler(s)
@@ -13,6 +31,7 @@ User Preferences:
 - Preferred travel mode: ${input.travelMode.join(", ") || "any"}
 - Travel style: ${input.travelStyle}
 - Max travel time from home: ${input.maxTravelHours ? `${input.maxTravelHours} hours` : "flexible"}
+- Home airport: ${originAirport ?? "unknown"}
 ${input.country ? `- Preferred country/region: ${input.country}` : ""}
 
 Important considerations:
@@ -20,6 +39,9 @@ Important considerations:
 - Consider value-for-money destinations
 - Consider seasonality and best times to visit
 - Rough dates allow flexibility to find better prices
+- Prefer breadth over repetition: include a diverse set of realistic options rather than only the safest picks.
+- If a max travel time is provided, treat it as a hard limit and do not suggest destinations outside that flight time from the home airport.
+${formatTravelHintBlock(input.homeCity, input.maxTravelHours, travelHint ?? null)}
 
 Respond with a JSON array of destinations in this exact format:
 [
@@ -55,10 +77,7 @@ export function buildItineraryPrompt(
   input: TripPlannerInput,
   budgetSplit: { travel: number; accommodation: number; food: number; activities: number; misc: number }
 ): string {
-  const tripDays = Math.ceil(
-    (new Date(input.endDate).getTime() - new Date(input.startDate).getTime()) /
-      (1000 * 60 * 60 * 24)
-  );
+  const tripDays = calculateTripDays(input.startDate, input.endDate);
 
   return `You are an expert travel planner with deep local knowledge. Create a detailed, day-by-day itinerary for:
 
