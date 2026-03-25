@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import path from "path";
 import { normalizeFlightPreference } from "./flightPreferences";
+import { incrementMetric } from "./metrics";
 
 export interface FlightSearchArgs {
   origin: string;
@@ -286,6 +287,17 @@ export async function estimateFlightHours(args: FlightSearchArgs): Promise<numbe
 }
 
 export async function lookupFlightHours(args: FlightSearchArgs): Promise<FlightTimeLookupResult> {
+  // Testing helper: force lookup failures when SIMULATE_FLIGHT_LOOKUP_FAILURE=true
+  if (process.env.SIMULATE_FLIGHT_LOOKUP_FAILURE === "true") {
+    console.warn("SIMULATE_FLIGHT_LOOKUP_FAILURE enabled: forcing lookup failure");
+    incrementMetric('lookupFailures');
+    return {
+      hours: null,
+      verifiedThroughLiveSearch: false,
+      fromCache: false,
+    };
+  }
+
   const cacheKey = buildFlightTimeCacheKey(args);
   const cached = flightTimeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -331,6 +343,7 @@ export async function lookupFlightHours(args: FlightSearchArgs): Promise<FlightT
     };
   } catch (err) {
     console.warn("lookupFlightHours error:", err instanceof Error ? err.message : String(err));
+    incrementMetric('lookupFailures');
     return {
       hours: null,
       verifiedThroughLiveSearch: false,

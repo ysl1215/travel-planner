@@ -5,6 +5,8 @@ type ResolveFlightTimeOptions = {
   hasTravelLimit: boolean;
   shouldCheckLiveFlightPrices: boolean;
   canVerifyLiveFlightHours: boolean;
+  // When false, do NOT fall back to estimated hours; treat failed lookups as infinite travel time
+  allowFallbackUnderLimit?: boolean;
 };
 
 export type ResolvedFlightTime = {
@@ -28,8 +30,21 @@ export function resolveDestinationTravelTime(
     };
   }
 
-  if (options.hasTravelLimit && options.shouldCheckLiveFlightPrices && options.canVerifyLiveFlightHours) {
-    // Live lookup failed but we still have an estimatedFlightHours; fall back to that with a small penalty
+  if (options.hasTravelLimit && options.shouldCheckLiveFlightPrices) {
+    // Strict mode: if fallbacks are disallowed, treat any failed verification (including missing airport)
+    // as an unbounded travel time so it will be filtered out by the caller.
+    if (options.allowFallbackUnderLimit === false) {
+      return {
+        destination: {
+          ...destination,
+          verifiedThroughLiveSearch: false,
+        },
+        hours: Number.POSITIVE_INFINITY,
+      };
+    }
+
+    // Non-strict: fall back to the estimated flight hours (with a small penalty) so transient lookup
+    // failures don't cause the entire suggestion set to be emptied.
     const fallbackEstimate = Number.isFinite(destination.estimatedFlightHours)
       ? destination.estimatedFlightHours + 0.5
       : Number.POSITIVE_INFINITY;

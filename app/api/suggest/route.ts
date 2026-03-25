@@ -14,6 +14,7 @@ import { lookupFlightHours } from "@/lib/flightPrices";
 import { resolveDestinationTravelTime } from "@/lib/travelTime";
 import { getTravelHint } from "@/lib/travelHints";
 import { buildBucketAwareDestinationCandidates } from "@/lib/destinationFallbacks";
+import { incrementMetric } from "@/lib/metrics";
 import { TripPlannerInput, Destination } from "@/lib/types";
 
 const ajv = new Ajv();
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
       typeof input.maxTravelHours === "number" && Number.isFinite(input.maxTravelHours) && input.maxTravelHours > 0;
     const shouldCheckLiveFlightPrices = input.checkLiveFlightPrices !== false;
     const travelHint = getTravelHint(input.homeCity, input.maxTravelHours);
+    const allowFallbackUnderLimit = process.env.SUGGEST_ALLOW_FALLBACK_UNDER_LIMIT !== "false";
     const suggestionCacheKey = buildSuggestionCacheKey(input);
     const cachedSuggestion = suggestionCache.get(suggestionCacheKey);
     if (cachedSuggestion && cachedSuggestion.expiresAt > Date.now()) {
@@ -163,6 +165,7 @@ export async function POST(request: NextRequest) {
               hasTravelLimit,
               shouldCheckLiveFlightPrices,
               canVerifyLiveFlightHours: false,
+              allowFallbackUnderLimit,
             });
           }
 
@@ -180,6 +183,7 @@ export async function POST(request: NextRequest) {
             hasTravelLimit,
             shouldCheckLiveFlightPrices,
             canVerifyLiveFlightHours: Boolean(destAirport),
+            allowFallbackUnderLimit,
           });
         })
       );
@@ -246,16 +250,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const fallbackDestinations = sortDestinations(
+    const fallbackPool = sortDestinations(
       buildBucketAwareDestinationCandidates([], travelHint, 8)
     );
-    if (validateDestinations(fallbackDestinations)) {
+    if (validateDestinations(fallbackPool)) {
       console.warn("Using fallback destination suggestions after parse/re-prompt failure.");
-      const allowFallbackUnderLimit = process.env.SUGGEST_ALLOW_FALLBACK_UNDER_LIMIT !== "false";
       if (!hasTravelLimit || allowFallbackUnderLimit) {
-        const annotated = fallbackDestinations.map((d) => ({ ...d, verifiedThroughLiveSearch: false }));
+        // Filter the static pool by estimatedFlightHours so we don't return destinations
+        // that clearly exceed the user's travel limit (e.g. Tokyo at 2.5h for a 2h limit).
+        // If nothing passes the filter, fall back to the full pool rather than returning nothing.
+        const withinLimit = hasTravelLimit
+          ? fallbackPool.filter((d) => d.estimatedFlightHours <= (input.maxTravelHours as number))
+          : fallbackPool;
+        const toReturn = withinLimit.length > 0 ? withinLimit : fallbackPool;
+        const annotated = toReturn.map((d) => ({ ...d, verifiedThroughLiveSearch: false }));
+        incrementMetric('fallbackUsed');
         return respondWithDestinations(annotated);
       } else {
+        incrementMetric('travelLimitErrors');
         throw new Error(
           `No destinations found within ${input.maxTravelHours} hours from ${input.homeCity}. Try increasing the travel time limit.`
         );

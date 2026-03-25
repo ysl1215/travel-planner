@@ -26,9 +26,9 @@ User Preferences:
 - Home City: ${input.homeCity}
 - Travel Dates: ${input.startDate} to ${input.endDate} (flexible by ±${input.flexDays} days)
 - Number of Travelers: ${input.travelers}
-- Activities they love: ${input.likedActivities.join(", ") || "not specified"}
-- Activities to avoid: ${input.dislikedActivities.join(", ") || "none"}
-- Preferred travel mode: ${input.travelMode.join(", ") || "any"}
+- Activities they love: ${(input.likedActivities ?? []).join(", ") || "not specified"}
+- Activities to avoid: ${(input.dislikedActivities ?? []).join(", ") || "none"}
+- Preferred travel mode: ${(input.travelMode ?? []).join(", ") || "any"}
 - Travel style: ${input.travelStyle}
 - Max travel time from home: ${input.maxTravelHours ? `${input.maxTravelHours} hours` : "flexible"}
 - Home airport: ${originAirport ?? "unknown"}
@@ -90,8 +90,8 @@ Budget Breakdown:
   - Food: ${budgetSplit.food} ${input.currency}
   - Activities: ${budgetSplit.activities} ${input.currency}
   - Miscellaneous: ${budgetSplit.misc} ${input.currency}
-Liked Activities: ${input.likedActivities.join(", ") || "general tourism"}
-Activities to avoid: ${input.dislikedActivities.join(", ") || "none"}
+Liked Activities: ${(input.likedActivities ?? []).join(", ") || "general tourism"}
+Activities to avoid: ${(input.dislikedActivities ?? []).join(", ") || "none"}
 Travel Style: ${input.travelStyle}
 
 Create a response with:
@@ -183,14 +183,16 @@ export function buildChatSystemPrompt(
 ): string {
   let context = "";
   if (tripContext) {
+    const liked = (tripContext.likedActivities ?? []).join(", ");
+    const viewing = destination ? `- Currently viewing: ${destination}\n` : "";
     context = `
 Current Trip Planning Context:
 - Budget: ${tripContext.budget} ${tripContext.currency} for ${tripContext.travelers} traveler(s)
 - From: ${tripContext.homeCity}
 - Dates: ${tripContext.startDate} to ${tripContext.endDate}
-- Liked activities: ${tripContext.likedActivities.join(", ")}
+- Liked activities: ${liked}
 - Travel style: ${tripContext.travelStyle}
-${destination ? `- Currently viewing: ${destination}` : ""}
+${viewing}
 `;
   }
 
