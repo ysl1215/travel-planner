@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     // Compute tripDays for a compact short prompt
     const tripDays = calculateTripDays(input.startDate, input.endDate);
 
-    const shortPrompt = `You are an expert travel planner. Return a compact JSON object matching the itinerary schema only (no markdown or commentary). Destination: ${destination}. Duration: ${tripDays} days. Travelers: ${input.travelers}. Budget breakdown: travel ${budgetSplit.travel} ${input.currency}, accommodation ${budgetSplit.accommodation} ${input.currency}, food ${budgetSplit.food} ${input.currency}. Liked activities: ${input.likedActivities.join(", ") || "none"}. Travel style: ${input.travelStyle}. Keep output compact and include required fields.`;
+    const shortPrompt = `You are an expert travel planner. Return a compact JSON object matching the itinerary schema only (no markdown or commentary). Destination: ${destination}. Duration: ${tripDays} days. Travelers: ${input.travelers}. Budget breakdown: travel ${budgetSplit.travel} ${input.currency}, accommodation ${budgetSplit.accommodation} ${input.currency}, food ${budgetSplit.food} ${input.currency}. Liked activities: ${(input.likedActivities ?? []).join(", ") || "none"}. Travel style: ${input.travelStyle}. Keep output compact and include required fields.`;
 
     // Short-first behavior by default; caller may set expand=true to request a full, higher-token reply
     const promptToUse = expand ? fullPrompt : shortPrompt;
@@ -326,7 +326,7 @@ export async function POST(request: NextRequest) {
       return {
         destination: destinationLabel,
         totalDays,
-        overview: `A ${totalDays}-day ${input.travelStyle.toLowerCase()} trip to ${destinationLabel} with a focus on ${input.likedActivities.join(", ") || "local highlights"}.`,
+        overview: `A ${totalDays}-day ${input.travelStyle.toLowerCase()} trip to ${destinationLabel} with a focus on ${(input.likedActivities ?? []).join(", ") || "local highlights"}.`,
         days,
         topAttractions,
         foodRecommendations,
@@ -353,6 +353,14 @@ export async function POST(request: NextRequest) {
         // Fall through to final error
       }
       if (!candidate) {
+        // Neither the original response nor the model-assisted correction contained JSON.
+        // Build a structured fallback rather than returning a hard error.
+        const fallbackItinerary = buildFallbackItinerary({});
+        const fallbackValid = validateItinerary(fallbackItinerary);
+        if (fallbackValid) {
+          console.warn("No JSON in AI response even after correction attempt; using generated fallback itinerary.");
+          return NextResponse.json({ itinerary: fallbackItinerary });
+        }
         throw new Error("Could not parse itinerary from AI response");
       }
     }
