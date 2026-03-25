@@ -85,12 +85,26 @@ export async function POST(request: NextRequest) {
       suggestionCache.delete(suggestionCacheKey);
     }
 
+    // Strip disliked activities from vibeMatch deterministically — prompt instructions alone
+    // are not reliable, and the static fallback pool has hardcoded vibeMatch values.
+    const dislikedSet = new Set(
+      (input.dislikedActivities ?? []).map((a) => a.trim().toLowerCase())
+    );
+    const stripDislikedVibeMatches = (destinations: Destination[]): Destination[] => {
+      if (dislikedSet.size === 0) return destinations;
+      return destinations.map((d) => ({
+        ...d,
+        vibeMatch: d.vibeMatch.filter((v) => !dislikedSet.has(v.trim().toLowerCase())),
+      }));
+    };
+
     const respondWithDestinations = (destinations: Destination[]) => {
+      const cleaned = stripDislikedVibeMatches(destinations);
       suggestionCache.set(suggestionCacheKey, {
-        destinations,
+        destinations: cleaned,
         expiresAt: Date.now() + SUGGESTION_CACHE_TTL_MS,
       });
-      return NextResponse.json({ destinations });
+      return NextResponse.json({ destinations: cleaned });
     };
 
     const prompt = buildDestinationPrompt(input, originAirport, travelHint);
