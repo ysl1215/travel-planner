@@ -156,7 +156,7 @@ export default function DestinationCard({
         <div className="flex items-center gap-4 mt-3 text-sm text-gray-300">
           <div className="flex items-center gap-1">
             <Clock className="w-4 h-4" />
-            <span>~{destination.estimatedFlightHours}h flight</span>
+            <span>~{destination.estimatedFlightHours.toFixed(1)}h flight</span>
           </div>
           {destination.verifiedThroughLiveSearch && (
             <span className="text-[11px] font-semibold bg-emerald-500/20 text-emerald-200 rounded-full px-2 py-0.5">
@@ -283,23 +283,18 @@ export default function DestinationCard({
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-gray-800">{f.airline}</span>
+                      <span className="font-semibold text-gray-800">{f.airline || "—"}</span>
                       <span className="font-bold text-gray-900">
-                        Total {currency} {f.price > 0 ? f.price.toLocaleString() : "—"}
+                        {f.price > 0 ? `Total ${currency} ${f.price.toLocaleString()}` : "Price unavailable"}
                       </span>
                     </div>
                     <div className="text-gray-500 mt-0.5">
-                      {f.origin} → {f.destination}
-                      {" · "}
-                      {f.departureDate}
-                      {f.returnDate ? ` → ${f.returnDate}` : ""}
-                      {" · "}
                       {f.departureTime && f.arrivalTime
-                        ? `${f.departureTime} → ${f.arrivalTime} · `
-                        : ""}
-                      {f.duration}
+                        ? `${f.departureTime} → ${f.arrivalTime}`
+                        : "—"}
+                      {f.duration ? ` · ${f.duration}` : ""}
                       {typeof f.stops === "number" && (
-                        <span className="ml-1.5">
+                        <span className="ml-1">
                           · {f.stops === 0 ? "nonstop" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}
                         </span>
                       )}

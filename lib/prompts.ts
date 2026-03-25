@@ -41,6 +41,7 @@ Important considerations:
 - Rough dates allow flexibility to find better prices
 - Prefer breadth over repetition: include a diverse set of realistic options rather than only the safest picks.
 - If a max travel time is provided, treat it as a hard limit and do not suggest destinations outside that flight time from the home airport.
+- The "Activities to avoid" list is a hard exclusion: do NOT mention, reference, or allude to any of those activities anywhere in the response — not in rationale, highlights, or vibeMatch. The rationale must only reference what the user likes.
 ${formatTravelHintBlock(input.homeCity, input.maxTravelHours, travelHint ?? null)}
 
 Respond with a JSON array of destinations in this exact format:
@@ -50,7 +51,7 @@ Respond with a JSON array of destinations in this exact format:
     "country": "Country Name",
     "city": "City Name",
     "region": "Region/Area (optional)",
-    "rationale": "Detailed 2-3 sentence explanation of why this fits the user's budget, preferences, and dates",
+    "rationale": "Detailed 2-3 sentence explanation of why this fits the user's budget, liked activities, and dates — never mention avoided activities",
     "highlights": ["highlight1", "highlight2", "highlight3"],
     "estimatedFlightHours": 8,
     "estimatedBudgetFit": "excellent|good|stretch",
