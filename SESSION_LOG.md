@@ -3,7 +3,24 @@
 ## Session 2026-05-24
 
 ### Overview
-Major quality, reliability, and performance improvements. Added preference matching to fix mismatched destination suggestions, geocoding sanity checks to catch hallucinated flight times, response caching, test suite, and expanded data coverage.
+Major quality, reliability, and performance improvements. Added preference matching to fix mismatched destination suggestions, geocoding sanity checks to catch hallucinated flight times, response caching, test suite, and expanded data coverage. Researched 10 external repos for integration opportunities. Attempted end-to-end testing (pipeline works but free-tier models are rate-limited — needs paid credits).
+
+### End-of-Session Testing Status
+- Pipeline validated: server starts, loads env, tries models in fallback order
+- Model health cache works (blacklists failed models with correct TTL)
+- OpenRouter free tier unreliable: Llama 3.3 (429), DeepSeek V4 (402), Nemotron (slow/unparseable)
+- **Next step:** Add $5 OpenRouter credits, use `deepseek/deepseek-chat` as primary model
+- fast-flights (Google Flights scraper) installed as flight price fallback
+- flyai-cli (Fliggy/Alibaba) installed for China-centric inventory
+
+### External Repo Investigation
+Assessed 10 repos (full findings in `git-repo-investigation.md`). Key takeaways:
+- **travel-mcp-server**: Amadeus flight search + airport intelligence API (VERY HIGH relevance)
+- **travel-hacking-toolkit**: Multi-source pricing — Skiplagged, Airbnb, Trivago (HIGH)
+- **tripper**: SSE progress streaming, multi-LLM task routing (HIGH)
+- **TripCraft**: Spatio-temporal itinerary validation (HIGH)
+- **ChinaTravel**: Composable constraint pipeline / LLM-Modulo pattern (HIGH)
+- **ai-travel-agent**: Email export, SerpAPI, human-in-the-loop (HIGH)
 
 ### Changes Implemented
 
