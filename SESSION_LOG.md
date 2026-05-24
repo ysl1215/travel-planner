@@ -1,5 +1,85 @@
 # Travel Planner AI — Session Log
 
+## Session 2026-05-24
+
+### Overview
+Major quality, reliability, and performance improvements. Added preference matching to fix mismatched destination suggestions, geocoding sanity checks to catch hallucinated flight times, response caching, test suite, and expanded data coverage.
+
+### Changes Implemented
+
+**Infrastructure**
+- Initialized git repository (`main` branch, initial commit + 2 feature commits)
+- Added Vitest test suite (61 unit tests across 7 modules)
+- Added `test` and `test:watch` scripts to package.json
+- Added test step to GitHub Actions CI workflow
+
+**Preference Matching (new: `lib/preferenceMatch.ts`)**
+- Keyword-based scoring: scans vibeMatch/highlights/rationale against liked/disliked activities
+- 16 activity categories mapped to signal words (nightlife, hiking, beach, etc.)
+- Generic tourist city list for `preferHiddenGems` penalty
+- `scoreAndSortDestinations()` separates matched (score > 0) from deprioritised (score ≤ 0)
+- Re-prompt logic: if < 3 good matches, asks AI for replacements with stricter constraints
+- UI: amber warning badge + reduced opacity on deprioritised destination cards
+
+**Geocoding Reliability (`lib/flightTime.ts`)**
+- Country-based sanity check (`sanityCheckFlightHours`): catches hallucinated flight times using region-pair minimum hours table (e.g. Asia→Europe minimum 9h)
+- Parallelised Nominatim geocoding (staggered 1.1s instead of sequential)
+- Fixed bounding-box region inference (East Asia lat threshold 35→20 to cover Shanghai, etc.)
+- 70+ countries mapped to regions for validation
+
+**Prompt Improvements (`lib/prompts.ts`)**
+- HARD RULES section: explicitly forbids destinations matching disliked activities
+- vibeMatch instruction: must contain user's liked activities
+- Smarter flight time references: skips cities > 2.5x maxTravelHours (saves tokens)
+
+**Latency & Token Optimisation**
+- Response cache in suggest route (10min TTL, 50 entries, keyed on input hash)
+- Temperature 0.2 for JSON correction calls (more deterministic)
+- Temperature parameter threaded through `generate()` → OpenRouter provider
+
+**Data Coverage Expansion**
+- IATA map merge: `amadeus.ts` now falls back to `airports.ts` (~15 additional cities)
+- hafas profile fallback: DB → OeBB → SNCB for broader European train coverage
+- Static accommodation table expanded with ~20 cities (Balkans, Baltics, SEA, Iceland, Morocco, NZ)
+- Hostel estimate: uses curated static prices instead of synthetic `cheapest * 0.4`
+- Station IDs added for OeBB/SNCB networks
+
+**UI Improvements**
+- Loading indicators (Loader2 spinner + opacity transition) for train/hotel estimates
+- ErrorBoundary wrapping destination card grid
+- Preference warning badge on deprioritised destinations
+
+### Files Modified/Created
+
+| File | Summary |
+|------|---------|
+| `lib/preferenceMatch.ts` | New — preference scoring and sorting |
+| `lib/__tests__/preferenceMatch.test.ts` | New — 11 tests for preference matching |
+| `lib/__tests__/flightTime.test.ts` | Added 6 sanity check tests |
+| `lib/__tests__/airports.test.ts` | New — 6 tests |
+| `lib/__tests__/amadeus.test.ts` | New — 8 tests (IATA + hostel estimate) |
+| `lib/__tests__/hafas.test.ts` | New — 2 tests |
+| `lib/__tests__/sanitize.test.ts` | New — 9 tests |
+| `lib/__tests__/rateLimit.test.ts` | New — 4 tests |
+| `vitest.config.ts` | New — Vitest configuration |
+| `components/ErrorBoundary.tsx` | New — React error boundary |
+| `app/api/suggest/route.ts` | Preference filter, cache, sanity check integration |
+| `lib/flightTime.ts` | Country-region maps, sanity check, parallel geocoding |
+| `lib/prompts.ts` | HARD RULES, token optimisation |
+| `lib/amadeus.ts` | IATA merge, hostel estimate fix |
+| `lib/hafas.ts` | Multi-profile fallback |
+| `lib/accomEstimates.ts` | ~20 new cities |
+| `lib/ai.ts` | Temperature in GenerateOpts |
+| `lib/aiFix.ts` | Temperature 0.2 for corrections |
+| `lib/openrouter.ts` | Temperature parameter support |
+| `lib/types.ts` | `preferenceWarning` field on Destination |
+| `components/DestinationCard.tsx` | Warning badge, loading states |
+| `app/page.tsx` | ErrorBoundary wrapper |
+| `.github/workflows/ci.yml` | Test step added |
+| `package.json` | Vitest devDeps, test scripts |
+
+---
+
 ## Session 2026-05-23
 
 ### Overview

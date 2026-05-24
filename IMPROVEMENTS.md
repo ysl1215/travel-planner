@@ -129,9 +129,10 @@
 |----------|------|-------|--------|
 | ~~1~~ | ~~Scraper~~ | ~~Trending signals (TikTok/IG) likely broken~~ — Replaced with Wikipedia Pageviews API | Done |
 | ~~2~~ | ~~Scraper~~ | ~~YouTube video ID extraction fragile~~ — Replaced with yt-dlp `ytsearch:` | Done |
-| 3 | Trains | Only DB profile — UK/Spain routes may miss | Medium |
-| 4 | Hotels | Hostel estimate is synthetic (`cheapest * 0.4`) | Small |
-| 5 | Hotels | `cityToIataCode()` coverage (~45 cities) — share with airports.ts | Small |
+| ~~3~~ | ~~Trains~~ | ~~Only DB profile~~ — Added OeBB + SNCB profile fallback | Done |
+| ~~4~~ | ~~Hotels~~ | ~~Hostel estimate is synthetic~~ — Uses static table + tiered regional multiplier | Done |
+| ~~5~~ | ~~Hotels~~ | ~~`cityToIataCode()` coverage~~ — Merged with airports.ts + 15 new cities | Done |
 | 6 | Suggestions | `defaultFlightHours()` heuristic still present as last-resort (rarely hit) | Low |
 | 7 | init_db.py | Brittle migration tracking — add `schema_version` table | Low |
 | 8 | choose-ai-provider.js | Strips blank lines, no quoted value support | Low |
+| 9 | Geocoding | Persist Nominatim results to SQLite for growing coverage | Small |
