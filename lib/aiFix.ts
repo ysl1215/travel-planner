@@ -45,7 +45,7 @@ Return ONLY the corrected JSON.`;
     "You are a JSON fixer. Output ONLY the corrected JSON — no explanation, no markdown, no code fences.",
     userPrompt,
     undefined,
-    { preferShortFirst: true }
+    { preferShortFirst: true, temperature: 0.2 }
   );
 
   // Cache result (evict oldest if full)

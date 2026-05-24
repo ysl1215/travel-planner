@@ -30,6 +30,7 @@ export interface Destination {
   bestTimeToVisit: string;
   vibeMatch: string[];
   imageQuery: string;
+  preferenceWarning?: string;
 }
 
 export interface BudgetSplit {

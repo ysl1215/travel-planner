@@ -11,7 +11,7 @@ import { generateWithOpenRouter, streamWithOpenRouter } from "@/lib/openrouter";
 import { generateWithGemini, streamWithGemini } from "@/lib/gemini";
 import { generateWithLocalModel, streamWithLocalModel } from "@/lib/localModel";
 
-type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[] };
+type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number };
 
 // Provider health cache to avoid retrying known-bad providers for a TTL
 const DEFAULT_PROVIDER_HEALTH_TTL_MS = Number(process.env.AI_PROVIDER_HEALTH_TTL_MS ?? "60000");

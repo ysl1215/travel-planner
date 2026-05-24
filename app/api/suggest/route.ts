@@ -7,10 +7,55 @@ import { buildDestinationPrompt } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
 import { rateLimit } from "@/lib/rateLimit";
 import { queueCity } from "@/lib/db";
-import { estimateFlightHours, estimateFlightHoursAsync } from "@/lib/flightTime";
+import { estimateFlightHours, estimateFlightHoursAsync, sanityCheckFlightHours } from "@/lib/flightTime";
+import { scoreAndSortDestinations } from "@/lib/preferenceMatch";
 
 const ajv = new Ajv();
 const validateDestinations = ajv.compile(destinationsSchema as any);
+
+// Response cache: avoids re-generating for identical inputs
+const SUGGEST_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const SUGGEST_CACHE_MAX = 50;
+const suggestCache = new Map<string, { data: any; timestamp: number }>();
+
+function buildCacheKey(input: TripPlannerInput): string {
+  const sig = [
+    input.homeCity, input.budget, input.currency,
+    input.startDate, input.endDate,
+    (input.likedActivities ?? []).sort().join(","),
+    (input.dislikedActivities ?? []).sort().join(","),
+    input.travelPriorities,
+    input.maxTravelHours ?? "",
+    input.country ?? "",
+    input.travelStyle,
+    input.preferHiddenGems ? "1" : "0",
+  ].join("|");
+  // Simple hash
+  let hash = 0;
+  for (let i = 0; i < sig.length; i++) {
+    hash = ((hash << 5) - hash + sig.charCodeAt(i)) | 0;
+  }
+  return String(hash);
+}
+
+function getCachedResponse(key: string): any | null {
+  const entry = suggestCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > SUGGEST_CACHE_TTL) {
+    suggestCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedResponse(key: string, data: any) {
+  if (suggestCache.size >= SUGGEST_CACHE_MAX) {
+    // Evict oldest entry
+    const oldest = suggestCache.keys().next().value;
+    if (oldest !== undefined) suggestCache.delete(oldest);
+  }
+  suggestCache.set(key, { data, timestamp: Date.now() });
+}
 
 /**
  * Override AI-reported flight hours with independent great-circle estimates
@@ -33,6 +78,12 @@ async function correctAndFilterByTravelTime(
       const asyncEstimate = await estimateFlightHoursAsync(homeCity, d.city);
       if (asyncEstimate !== null) {
         d.estimatedFlightHours = asyncEstimate;
+      } else {
+        // Last resort: country-based sanity check to catch hallucinated flight times
+        const corrected = sanityCheckFlightHours(homeCity, d.country, d.estimatedFlightHours);
+        if (corrected !== null) {
+          d.estimatedFlightHours = corrected;
+        }
       }
     }
   }
@@ -43,12 +94,14 @@ async function correctAndFilterByTravelTime(
 }
 
 /** Return destinations response and auto-queue cities for scraping. */
-function destinationsResponse(destinations: Destination[]) {
+function destinationsResponse(destinations: Destination[], cacheKey?: string) {
   // Fire-and-forget: queue each city (no-op if DB not initialised or already queued)
   for (const d of destinations) {
     try { queueCity(d.city, d.country); } catch { /* DB may not exist yet — skip */ }
   }
-  return NextResponse.json({ destinations });
+  const data = { destinations };
+  if (cacheKey) setCachedResponse(cacheKey, data);
+  return NextResponse.json(data);
 }
 
 /**
@@ -106,6 +159,69 @@ Return 3-6 destinations as a JSON array. Same schema as before:
   return null;
 }
 
+/**
+ * When most destinations don't match user preferences, re-prompt for better alternatives.
+ */
+async function handleLowPreferenceMatch(
+  matched: Destination[],
+  deprioritised: Destination[],
+  input: TripPlannerInput
+): Promise<NextResponse | null> {
+  const needed = 4 - matched.length;
+  const avoidCities = deprioritised.map((d) => d.city).join(", ");
+  const avoidActivities = (input.dislikedActivities ?? []).join(", ");
+  const likedActivities = (input.likedActivities ?? []).join(", ");
+
+  const retryPrompt = `Your previous suggestions did not match the user's preferences well. Please suggest ${needed} MORE destinations.
+
+DO NOT suggest these cities (already suggested): ${avoidCities}
+The user AVOIDS these activities: ${avoidActivities || "none specified"}
+The user LIKES: ${likedActivities || "general tourism"}
+${input.preferHiddenGems ? "The user wants OFF-THE-BEATEN-PATH destinations — avoid major tourist cities." : ""}
+
+User profile:
+- Home: ${input.homeCity}
+- Budget: ${input.budget} ${input.currency} for ${input.travelers} traveler(s)
+- Style: ${input.travelStyle}
+${input.maxTravelHours ? `- Max flight: ${input.maxTravelHours}h` : ""}
+${input.country ? `- Preferred region: ${input.country}` : ""}
+
+Each destination's vibeMatch MUST include activities from the user's Likes list.
+
+Return a JSON array only. Each item:
+{"id":"string","country":"string","city":"string","airportCode":"3-letter IATA","rationale":"string","highlights":["..."],"estimatedFlightHours":0.0,"estimatedBudgetFit":"excellent|good|stretch","bestTimeToVisit":"string","vibeMatch":["..."],"imageQuery":"string"}`;
+
+  try {
+    const raw = await generate(
+      "You are an expert travel planner. Match the user's activity preferences precisely. Respond with valid JSON only.",
+      retryPrompt
+    );
+
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return null;
+
+    const parsed: Destination[] = JSON.parse(match[0]);
+    const refiltered = await correctAndFilterByTravelTime(parsed, input.homeCity, input.maxTravelHours);
+
+    if (refiltered.length > 0) {
+      // Score the new batch too
+      const { matched: newMatched } = scoreAndSortDestinations(
+        refiltered,
+        input.likedActivities ?? [],
+        input.dislikedActivities ?? [],
+        input.preferHiddenGems ?? false
+      );
+      // Combine: original matched + new matched + deprioritised as fallback
+      const combined = [...matched, ...newMatched, ...deprioritised];
+      return destinationsResponse(combined.slice(0, 6));
+    }
+  } catch (err) {
+    console.warn("Preference re-prompt failed:", err instanceof Error ? err.message : err);
+  }
+
+  return null;
+}
+
 function guessRegion(city: string): string {
   const c = city.toLowerCase();
   if (/shanghai|beijing|guangzhou|shenzhen|chengdu|hong kong|taipei|china/.test(c)) return "East Asia (China region)";
@@ -135,6 +251,13 @@ export async function POST(request: NextRequest) {
         { error: "Missing required fields: budget, homeCity, travelers" },
         { status: 400 }
       );
+    }
+
+    // Check cache first
+    const cacheKey = buildCacheKey(input);
+    const cached = getCachedResponse(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
     }
 
     const prompt = buildDestinationPrompt(input);
@@ -212,12 +335,28 @@ export async function POST(request: NextRequest) {
       return closers ? sanitized + closers : sanitized;
     }
 
-    // Helper: filter, check for empty result, and respond (with re-prompt if all filtered)
+    // Helper: filter, score preferences, check for empty result, and respond
     async function filterAndRespond(parsed: Destination[]): Promise<NextResponse> {
       const filtered = await correctAndFilterByTravelTime(parsed, input.homeCity, input.maxTravelHours);
       const retryResponse = await handleEmptyFilterResult(filtered, parsed.length, input);
       if (retryResponse) return retryResponse;
-      return destinationsResponse(filtered);
+
+      // Score and sort by preference match
+      const { matched, deprioritised } = scoreAndSortDestinations(
+        filtered,
+        input.likedActivities ?? [],
+        input.dislikedActivities ?? [],
+        input.preferHiddenGems ?? false
+      );
+
+      // If too few good matches, try re-prompting for replacements
+      if (matched.length < 3 && deprioritised.length > 0) {
+        const replacements = await handleLowPreferenceMatch(matched, deprioritised, input);
+        if (replacements) return replacements;
+      }
+
+      // Return matched first, then deprioritised as fallback
+      return destinationsResponse([...matched, ...deprioritised], cacheKey);
     }
 
     // 1) Try parsing the raw candidate

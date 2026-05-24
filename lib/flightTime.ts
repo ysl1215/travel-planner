@@ -272,18 +272,123 @@ export async function estimateFlightHoursAsync(originCity: string, destinationCi
   const staticResult = estimateFlightHours(originCity, destinationCity);
   if (staticResult !== null) return staticResult;
 
-  // Geocode whichever city is missing
-  const origin = getCoords(originCity) ?? await geocodeCity(originCity);
-  if (!origin) return null;
+  // Geocode both cities in parallel (staggered by 1.1s for Nominatim rate limit)
+  const originCoords = getCoords(originCity);
+  const destCoords = getCoords(destinationCity);
 
-  // Rate limit: Nominatim asks for 1 req/s
-  await new Promise((r) => setTimeout(r, 1_100));
+  const [origin, dest] = await Promise.all([
+    originCoords ?? geocodeCity(originCity),
+    destCoords ?? delay(1_100).then(() => geocodeCity(destinationCity)),
+  ]);
 
-  const dest = getCoords(destinationCity) ?? await geocodeCity(destinationCity);
-  if (!dest) return null;
+  if (!origin || !dest) return null;
 
   const distance = haversineDistanceKm(origin[0], origin[1], dest[0], dest[1]);
   return Math.round(distanceToFlightHours(distance) * 10) / 10;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ─── Country-based sanity check ─────────────────────────────────────────────
+
+const COUNTRY_REGIONS: Record<string, string> = {
+  // Europe
+  "france": "europe", "germany": "europe", "italy": "europe", "spain": "europe",
+  "uk": "europe", "united kingdom": "europe", "portugal": "europe", "netherlands": "europe",
+  "belgium": "europe", "austria": "europe", "switzerland": "europe", "greece": "europe",
+  "czech republic": "europe", "czechia": "europe", "poland": "europe", "hungary": "europe",
+  "croatia": "europe", "sweden": "europe", "norway": "europe", "denmark": "europe",
+  "finland": "europe", "ireland": "europe", "romania": "europe", "bulgaria": "europe",
+  "serbia": "europe", "slovenia": "europe", "bosnia": "europe", "montenegro": "europe",
+  "albania": "europe", "north macedonia": "europe", "iceland": "europe",
+  "estonia": "europe", "latvia": "europe", "lithuania": "europe", "slovakia": "europe",
+  // East Asia
+  "japan": "east_asia", "south korea": "east_asia", "korea": "east_asia",
+  "china": "east_asia", "taiwan": "east_asia", "hong kong": "east_asia",
+  // Southeast Asia
+  "thailand": "southeast_asia", "vietnam": "southeast_asia", "indonesia": "southeast_asia",
+  "malaysia": "southeast_asia", "philippines": "southeast_asia", "singapore": "southeast_asia",
+  "cambodia": "southeast_asia", "laos": "southeast_asia", "myanmar": "southeast_asia",
+  // South Asia
+  "india": "south_asia", "sri lanka": "south_asia", "nepal": "south_asia",
+  "bangladesh": "south_asia", "pakistan": "south_asia",
+  // Middle East
+  "turkey": "middle_east", "uae": "middle_east", "united arab emirates": "middle_east",
+  "qatar": "middle_east", "saudi arabia": "middle_east", "israel": "middle_east",
+  "egypt": "middle_east", "jordan": "middle_east", "oman": "middle_east",
+  // Americas
+  "usa": "americas", "united states": "americas", "canada": "americas",
+  "mexico": "americas", "brazil": "americas", "argentina": "americas",
+  "colombia": "americas", "peru": "americas", "chile": "americas",
+  // Oceania
+  "australia": "oceania", "new zealand": "oceania",
+  // Africa
+  "south africa": "africa", "kenya": "africa", "tanzania": "africa",
+  "morocco": "africa", "nigeria": "africa", "ethiopia": "africa",
+  // Central Asia / Caucasus
+  "georgia": "caucasus", "armenia": "caucasus", "azerbaijan": "caucasus",
+  "uzbekistan": "central_asia", "kazakhstan": "central_asia",
+};
+
+const MIN_HOURS_BETWEEN_REGIONS: Record<string, Record<string, number>> = {
+  "east_asia":      { "europe": 9, "americas": 10, "africa": 10, "oceania": 7, "middle_east": 6, "south_asia": 5 },
+  "southeast_asia": { "europe": 9, "americas": 12, "africa": 10, "oceania": 6, "middle_east": 6 },
+  "south_asia":     { "europe": 7, "americas": 14, "east_asia": 5, "oceania": 9 },
+  "europe":         { "east_asia": 9, "southeast_asia": 9, "oceania": 18, "americas": 7, "south_asia": 7 },
+  "americas":       { "europe": 7, "east_asia": 10, "southeast_asia": 12, "oceania": 12, "africa": 9 },
+  "oceania":        { "europe": 18, "americas": 12, "east_asia": 7, "southeast_asia": 6, "africa": 14 },
+  "africa":         { "east_asia": 10, "americas": 9, "oceania": 14, "europe": 4 },
+  "middle_east":    { "east_asia": 6, "americas": 12, "europe": 4, "oceania": 12 },
+};
+
+function getCountryRegion(country: string): string | null {
+  return COUNTRY_REGIONS[country.toLowerCase().trim()] ?? null;
+}
+
+function getCityRegion(city: string): string | null {
+  const coords = getCoords(city);
+  if (!coords) return null;
+  const [lat, lon] = coords;
+  // Rough bounding-box region inference from coordinates
+  if (lat > 20 && lon > 100 && lon < 145) return "east_asia";
+  if (lat > -10 && lat <= 20 && lon > 90 && lon < 140) return "southeast_asia";
+  if (lat > 5 && lat < 40 && lon > 60 && lon <= 100) return "south_asia";
+  if (lat > 35 && lon > -30 && lon < 45) return "europe";
+  if (lon < -30) return "americas";
+  if (lat < -10 && lon > 100) return "oceania";
+  if (lat > 10 && lat < 40 && lon >= 25 && lon < 60) return "middle_east";
+  if (lat < 35 && lat > -40 && lon > -20 && lon < 55) return "africa";
+  return null;
+}
+
+/**
+ * Sanity-check whether a claimed flight time between a home city and a destination
+ * (identified by country) is plausible. Returns null if we can't determine,
+ * or a corrected minimum if the claim is clearly hallucinated.
+ */
+export function sanityCheckFlightHours(
+  homeCity: string,
+  destCountry: string,
+  claimedHours: number
+): number | null {
+  const homeRegion = getCityRegion(homeCity);
+  const destRegion = getCountryRegion(destCountry);
+  if (!homeRegion || !destRegion) return null;
+  if (homeRegion === destRegion) return null; // same region, trust the claim
+
+  const minHours = MIN_HOURS_BETWEEN_REGIONS[homeRegion]?.[destRegion]
+    ?? MIN_HOURS_BETWEEN_REGIONS[destRegion]?.[homeRegion];
+
+  if (!minHours) return null;
+
+  // If claimed hours are less than minimum plausible, it's hallucinated
+  if (claimedHours < minHours * 0.7) {
+    return minHours;
+  }
+
+  return null; // claim is plausible
 }
 
 /**

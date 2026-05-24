@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateFlightHours, checkReachability, hasCoordinates } from "../flightTime";
+import { estimateFlightHours, checkReachability, hasCoordinates, sanityCheckFlightHours } from "../flightTime";
 
 describe("estimateFlightHours", () => {
   it("returns a reasonable estimate for a known short-haul route", () => {
@@ -81,5 +81,43 @@ describe("hasCoordinates", () => {
 
   it("returns false for an unknown city", () => {
     expect(hasCoordinates("Atlantis")).toBe(false);
+  });
+});
+
+describe("sanityCheckFlightHours", () => {
+  it("returns corrected hours when claim is clearly hallucinated", () => {
+    // Shanghai to Croatia claimed as 3h — minimum is ~9h
+    const corrected = sanityCheckFlightHours("Shanghai", "Croatia", 3);
+    expect(corrected).not.toBeNull();
+    expect(corrected!).toBeGreaterThanOrEqual(9);
+  });
+
+  it("returns null when claim is plausible", () => {
+    // Shanghai to Japan claimed as 3h — same region, plausible
+    const result = sanityCheckFlightHours("Shanghai", "Japan", 3);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when home city region cannot be determined", () => {
+    const result = sanityCheckFlightHours("UnknownCity", "France", 2);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when destination country is unknown", () => {
+    const result = sanityCheckFlightHours("London", "Narnia", 5);
+    expect(result).toBeNull();
+  });
+
+  it("catches Asia-to-Europe hallucination", () => {
+    // Bangkok to Germany claimed as 4h — minimum ~9h
+    const corrected = sanityCheckFlightHours("Bangkok", "Germany", 4);
+    expect(corrected).not.toBeNull();
+    expect(corrected!).toBeGreaterThanOrEqual(9);
+  });
+
+  it("allows same-region short flights", () => {
+    // London to France claimed as 1.5h — same region, trusted
+    const result = sanityCheckFlightHours("London", "France", 1.5);
+    expect(result).toBeNull();
   });
 });

@@ -201,7 +201,12 @@ export default function DestinationCard({
       </div>
 
       {/* Content */}
-      <div className="p-5">
+      <div className={`p-5 ${destination.preferenceWarning ? "opacity-75" : ""}`}>
+        {destination.preferenceWarning && (
+          <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
+            ⚠ {destination.preferenceWarning}
+          </div>
+        )}
         <p className="text-gray-700 text-sm leading-relaxed mb-4">{destination.rationale}</p>
 
         {/* Highlights */}

@@ -8,12 +8,14 @@ function buildFlightTimeExamples(homeCity: string, maxHours?: number): string {
     "london", "paris", "sydney", "new york", "mumbai",
   ];
   const examples: string[] = [];
+  const cutoff = maxHours ? maxHours * 2.5 : Infinity;
   for (const city of references) {
     const hours = estimateFlightHours(homeCity, city);
-    if (hours !== null) {
-      const mark = maxHours && hours > maxHours ? " ✗ TOO FAR" : " ✓";
-      examples.push(`  ${city}: ~${hours}h${mark}`);
-    }
+    if (hours === null) continue;
+    // Skip references that are vastly beyond the constraint (saves tokens)
+    if (hours > cutoff) continue;
+    const mark = maxHours && hours > maxHours ? " ✗ TOO FAR" : " ✓";
+    examples.push(`  ${city}: ~${hours}h${mark}`);
   }
   if (examples.length === 0) return "";
   return `\nREFERENCE flight times from ${homeCity} (use these as calibration — do NOT suggest cities marked ✗ TOO FAR):\n${examples.join("\n")}`;
@@ -46,7 +48,9 @@ User profile:
 ${input.country ? `- Preferred region: ${sanitize(input.country)}` : ""}
 ${input.preferHiddenGems ? `- STRONG PREFERENCE: off-the-beaten-path destinations.` : ""}${flightExamples}
 
-ANTI-GENERIC RULES:
+HARD RULES:
+- Do NOT suggest ANY destination whose primary appeal is one of the 'Avoids' activities above. If the user avoids Nightlife, do not suggest party destinations (Ibiza, Koh Phangan, Berlin clubs, etc.). If they avoid Beach, do not suggest beach resorts.
+- The vibeMatch array MUST contain activities from the user's 'Likes' list. If none of the user's liked activities fit a destination, do not suggest it.
 - Do NOT suggest destinations that appear in the top 10 results of a generic "best places to visit" Google search.
 - Prioritise places a well-travelled local would recommend to a friend, not a tourist.
 - The rationale MUST reference the user's specific priorities above — not generic "beautiful scenery" or "rich culture".

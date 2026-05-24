@@ -124,7 +124,7 @@ export async function generateWithOpenRouter(
   systemPrompt: string,
   userPrompt: string,
   model?: string,
-  opts?: { preferShortFirst?: boolean; tokenCandidates?: number[] }
+  opts?: { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number }
 ): Promise<string> {
   const rawModels = parseModels(model);
   const models = prioritizeModels(rawModels);
@@ -146,7 +146,7 @@ export async function generateWithOpenRouter(
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          temperature: 0.7,
+          temperature: opts?.temperature ?? 0.7,
           max_tokens: maxTokens,
         }),
       });
