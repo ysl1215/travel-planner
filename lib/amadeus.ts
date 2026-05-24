@@ -7,7 +7,7 @@
  * Docs: https://developers.amadeus.com/self-service/category/hotels
  */
 
-import { AccomEstimate } from "./accomEstimates";
+import { AccomEstimate, getAccomEstimate } from "./accomEstimates";
 import { cityToAirport } from "./airports";
 
 const AMADEUS_BASE_TEST = "https://test.api.amadeus.com";
@@ -204,12 +204,43 @@ export async function searchHotels(
   }
 }
 
+// Regional hostel averages (USD/night) for cities not in the static table
+const REGIONAL_HOSTEL_AVERAGES: Record<string, number> = {
+  "western europe": 30,
+  "northern europe": 30,
+  "central europe": 15,
+  "eastern europe": 12,
+  "southern europe": 18,
+  "middle east": 15,
+  "east asia": 15,
+  "southeast asia": 8,
+  "south asia": 7,
+  "north america": 32,
+  "central america": 10,
+  "south america": 10,
+  "africa": 12,
+  "oceania": 28,
+};
+
+function estimateHostelPrice(city: string, liveHotelCheapest: number): number {
+  // Prefer the curated static hostel price if available
+  const staticEstimate = getAccomEstimate(city);
+  if (staticEstimate) return staticEstimate.hostel;
+
+  // Regional fallback: use hotel cheapest to guess region bracket
+  // Hotels under $40/night → budget region, $40-80 → mid, $80+ → expensive
+  if (liveHotelCheapest < 40) return Math.round(liveHotelCheapest * 0.35);
+  if (liveHotelCheapest < 80) return Math.round(liveHotelCheapest * 0.3);
+  return Math.round(liveHotelCheapest * 0.25);
+}
+
 /**
  * Convert live hotel result to the AccomEstimate interface expected by the frontend.
+ * Uses static hostel data instead of synthetic multiplier when available.
  */
-export function toAccomEstimate(live: LiveHotelResult): AccomEstimate {
+export function toAccomEstimate(live: LiveHotelResult, city?: string): AccomEstimate {
   return {
-    hostel: Math.round(live.cheapest * 0.4),
+    hostel: city ? estimateHostelPrice(city, live.cheapest) : Math.round(live.cheapest * 0.4),
     budget: live.cheapest,
     midrange: live.median,
     currency: "USD",

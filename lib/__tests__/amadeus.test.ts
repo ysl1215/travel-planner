@@ -32,7 +32,24 @@ describe("cityToIataCode", () => {
 });
 
 describe("toAccomEstimate", () => {
-  it("converts live hotel data to AccomEstimate format", () => {
+  it("uses static hostel price when city is provided and known", () => {
+    const live: LiveHotelResult = {
+      cheapest: 80,
+      median: 150,
+      expensive: 300,
+      currency: "USD",
+      sampleCount: 10,
+    };
+
+    const result = toAccomEstimate(live, "london");
+
+    expect(result.hostel).toBe(30); // from static table, not 80 * 0.4
+    expect(result.budget).toBe(80);
+    expect(result.midrange).toBe(150);
+    expect(result.currency).toBe("USD");
+  });
+
+  it("falls back to multiplier when city is not provided", () => {
     const live: LiveHotelResult = {
       cheapest: 80,
       median: 150,
@@ -42,23 +59,36 @@ describe("toAccomEstimate", () => {
     };
 
     const result = toAccomEstimate(live);
-
-    expect(result.hostel).toBe(32); // 80 * 0.4
-    expect(result.budget).toBe(80);
-    expect(result.midrange).toBe(150);
-    expect(result.currency).toBe("USD");
+    expect(result.hostel).toBe(32); // 80 * 0.4 (legacy fallback)
   });
 
-  it("rounds the hostel estimate", () => {
+  it("uses regional multiplier for cities not in any static table", () => {
     const live: LiveHotelResult = {
-      cheapest: 73,
-      median: 120,
-      expensive: 250,
-      currency: "EUR",
+      cheapest: 25,
+      median: 50,
+      expensive: 100,
+      currency: "USD",
       sampleCount: 5,
     };
 
-    const result = toAccomEstimate(live);
-    expect(result.hostel).toBe(29); // Math.round(73 * 0.4)
+    // "luang prabang" is not in accomEstimates static table
+    const result = toAccomEstimate(live, "luang prabang");
+    expect(result.hostel).toBeLessThan(live.cheapest);
+    expect(result.hostel).toBeGreaterThan(0);
+    expect(result.hostel).toBe(9); // Math.round(25 * 0.35)
+  });
+
+  it("uses static hostel price for cities in the accom table", () => {
+    const live: LiveHotelResult = {
+      cheapest: 120,
+      median: 200,
+      expensive: 400,
+      currency: "USD",
+      sampleCount: 8,
+    };
+
+    // Reykjavik is in static table with hostel=35
+    const result = toAccomEstimate(live, "reykjavik");
+    expect(result.hostel).toBe(35);
   });
 });

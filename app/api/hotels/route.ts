@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     if (cityCode) {
       const live = await searchHotels(cityCode, checkIn, checkOut, adults);
       if (live) {
-        const estimate = toAccomEstimate(live);
+        const estimate = toAccomEstimate(live, city);
         const responseData = {
           ...estimate,
           sampleCount: live.sampleCount,

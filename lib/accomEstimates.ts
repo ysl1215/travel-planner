@@ -45,6 +45,15 @@ const ACCOM_TABLE: Record<string, AccomEstimate> = {
   warsaw:       { hostel: 12, budget: 40,  midrange: 85,  currency: "USD" },
   krakow:       { hostel: 10, budget: 35,  midrange: 75,  currency: "USD" },
   athens:       { hostel: 15, budget: 50,  midrange: 100, currency: "USD" },
+  dubrovnik:    { hostel: 18, budget: 60,  midrange: 130, currency: "USD" },
+  split:        { hostel: 15, budget: 50,  midrange: 100, currency: "USD" },
+  zagreb:       { hostel: 12, budget: 35,  midrange: 75,  currency: "USD" },
+  belgrade:     { hostel: 10, budget: 30,  midrange: 65,  currency: "USD" },
+  sofia:        { hostel: 8,  budget: 28,  midrange: 60,  currency: "USD" },
+  bucharest:    { hostel: 10, budget: 32,  midrange: 70,  currency: "USD" },
+  tallinn:      { hostel: 15, budget: 45,  midrange: 90,  currency: "USD" },
+  riga:         { hostel: 12, budget: 38,  midrange: 75,  currency: "USD" },
+  vilnius:      { hostel: 10, budget: 35,  midrange: 70,  currency: "USD" },
   // Middle East
   dubai:        { hostel: 25, budget: 80,  midrange: 180, currency: "USD" },
   istanbul:     { hostel: 12, budget: 40,  midrange: 90,  currency: "USD" },
@@ -63,8 +72,14 @@ const ACCOM_TABLE: Record<string, AccomEstimate> = {
   jakarta:      { hostel: 8,  budget: 25,  midrange: 60,  currency: "USD" },
   hanoi:        { hostel: 6,  budget: 18,  midrange: 45,  currency: "USD" },
   "ho chi minh city": { hostel: 6, budget: 18, midrange: 45, currency: "USD" },
+  "hoi an":     { hostel: 5,  budget: 15,  midrange: 40,  currency: "USD" },
+  "da nang":    { hostel: 6,  budget: 18,  midrange: 45,  currency: "USD" },
+  "siem reap":  { hostel: 5,  budget: 12,  midrange: 35,  currency: "USD" },
+  "phnom penh": { hostel: 5,  budget: 14,  midrange: 38,  currency: "USD" },
+  manila:       { hostel: 8,  budget: 22,  midrange: 50,  currency: "USD" },
   delhi:        { hostel: 6,  budget: 20,  midrange: 55,  currency: "USD" },
   mumbai:       { hostel: 8,  budget: 25,  midrange: 65,  currency: "USD" },
+  colombo:      { hostel: 6,  budget: 18,  midrange: 45,  currency: "USD" },
   // Americas
   "new york":   { hostel: 40, budget: 120, midrange: 250, currency: "USD" },
   "los angeles":{ hostel: 35, budget: 100, midrange: 200, currency: "USD" },
@@ -79,8 +94,14 @@ const ACCOM_TABLE: Record<string, AccomEstimate> = {
   // Africa / Oceania
   "cape town":  { hostel: 12, budget: 40,  midrange: 90,  currency: "USD" },
   nairobi:      { hostel: 10, budget: 30,  midrange: 70,  currency: "USD" },
+  marrakech:    { hostel: 8,  budget: 25,  midrange: 60,  currency: "USD" },
+  casablanca:   { hostel: 10, budget: 30,  midrange: 70,  currency: "USD" },
+  // Oceania
   sydney:       { hostel: 30, budget: 90,  midrange: 180, currency: "USD" },
   melbourne:    { hostel: 28, budget: 85,  midrange: 170, currency: "USD" },
+  auckland:     { hostel: 25, budget: 75,  midrange: 150, currency: "USD" },
+  // Other
+  reykjavik:    { hostel: 35, budget: 110, midrange: 220, currency: "USD" },
 };
 
 function normalise(city: string): string {
