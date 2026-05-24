@@ -35,5 +35,8 @@ jobs:
           OPENROUTER_API_KEY: "ci-placeholder-not-used-at-build-time"
         run: npm run build
 
+      - name: Test
+        run: npm test
+
       - name: Lint
         run: npm run lint

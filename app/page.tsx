@@ -10,6 +10,7 @@ import { TripPlannerInput, Destination, BudgetSplit, TripItinerary, FlightOffer 
 import { cityToAirport } from "@/lib/airports";
 import { getAccomEstimate } from "@/lib/accomEstimates";
 import { ArrowLeft, MapPin, Sparkles, PlayCircle, Plane } from "lucide-react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 type AppStep = "form" | "destinations" | "itinerary";
 
@@ -474,28 +475,30 @@ export default function Home() {
                 </button>
               </div>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {sortedDestinations.map((dest, i) => (
-                <DestinationCard
-                  key={dest.id}
-                  destination={dest}
-                  isSelected={selectedDestinations.has(dest.id)}
-                  onSelect={toggleDestinationSelection}
-                  onGenerateItinerary={handleGenerateItinerary}
-                  rank={i + 1}
-                  originAirport={originAirport}
-                  originCity={tripInput.homeCity}
-                  departureDate={tripInput.startDate || undefined}
-                  returnDate={tripInput.endDate || undefined}
-                  adults={tripInput.travelers}
-                  currency={tripInput.currency}
-                  prefetchedPrices={allPrices[dest.id]}
-                  travelBudget={budgetSplit.travel}
-                  prefetchedTrainEstimate={allTrainEstimates[dest.id]}
-                  prefetchedHotelEstimate={allHotelEstimates[dest.id]}
-                />
-              ))}
-            </div>
+            <ErrorBoundary>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {sortedDestinations.map((dest, i) => (
+                  <DestinationCard
+                    key={dest.id}
+                    destination={dest}
+                    isSelected={selectedDestinations.has(dest.id)}
+                    onSelect={toggleDestinationSelection}
+                    onGenerateItinerary={handleGenerateItinerary}
+                    rank={i + 1}
+                    originAirport={originAirport}
+                    originCity={tripInput.homeCity}
+                    departureDate={tripInput.startDate || undefined}
+                    returnDate={tripInput.endDate || undefined}
+                    adults={tripInput.travelers}
+                    currency={tripInput.currency}
+                    prefetchedPrices={allPrices[dest.id]}
+                    travelBudget={budgetSplit.travel}
+                    prefetchedTrainEstimate={allTrainEstimates[dest.id]}
+                    prefetchedHotelEstimate={allHotelEstimates[dest.id]}
+                  />
+                ))}
+              </div>
+            </ErrorBoundary>
 
             {isLoadingItinerary && (
               <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">

@@ -25,18 +25,23 @@ interface HafasLocation {
   name?: string;
 }
 
-let clientPromise: Promise<any> | null = null;
+type ProfileName = "db" | "oebb" | "sncb";
 
-async function getClient() {
-  if (!clientPromise) {
-    clientPromise = (async () => {
+const clientCache = new Map<ProfileName, Promise<any>>();
+
+async function getClient(profileName: ProfileName = "db") {
+  if (!clientCache.has(profileName)) {
+    const promise = (async () => {
       const { createClient } = await import("hafas-client");
-      const { profile } = await import("hafas-client/p/db/index.js");
+      const { profile } = await import(`hafas-client/p/${profileName}/index.js`);
       return createClient(profile, "travel-planner-ai");
     })();
+    clientCache.set(profileName, promise);
   }
-  return clientPromise;
+  return clientCache.get(profileName)!;
 }
+
+const FALLBACK_PROFILES: ProfileName[] = ["db", "oebb", "sncb"];
 
 // Pre-mapped station IDs for common European cities (avoids fuzzy search network call)
 const STATION_IDS: Record<string, string> = {
@@ -70,6 +75,16 @@ const STATION_IDS: Record<string, string> = {
   "nice": "8700614",         // Nice-Ville
   "edinburgh": "9225000",    // Edinburgh Waverley
   "manchester": "9200124",   // Manchester Piccadilly
+  // ÖBB network stations
+  "innsbruck": "8100108",   // Innsbruck Hbf
+  "graz": "8100173",        // Graz Hbf
+  "linz": "8100013",        // Linz Hbf
+  "ljubljana": "7943001",   // Ljubljana
+  // SNCB network stations
+  "antwerp": "8821006",     // Antwerpen-Centraal
+  "ghent": "8892007",       // Gent-Sint-Pieters
+  "lille": "8700011",       // Lille Flandres
+  "strasbourg": "8700011",  // Strasbourg
 };
 
 async function findStation(client: any, city: string): Promise<string | null> {
@@ -104,6 +119,7 @@ export interface LiveTrainResult {
 
 /**
  * Search for train journeys between two cities.
+ * Tries multiple HAFAS profiles (DB, ÖBB, SNCB) for broader coverage.
  * Returns price and duration info, or null if no route found.
  */
 export async function searchTrains(
@@ -111,8 +127,21 @@ export async function searchTrains(
   destinationCity: string,
   departureDate?: string
 ): Promise<LiveTrainResult | null> {
+  for (const profileName of FALLBACK_PROFILES) {
+    const result = await searchTrainsWithProfile(profileName, originCity, destinationCity, departureDate);
+    if (result) return result;
+  }
+  return null;
+}
+
+async function searchTrainsWithProfile(
+  profileName: ProfileName,
+  originCity: string,
+  destinationCity: string,
+  departureDate?: string
+): Promise<LiveTrainResult | null> {
   try {
-    const client = await getClient();
+    const client = await getClient(profileName);
 
     const [originId, destId] = await Promise.all([
       findStation(client, originCity),
@@ -145,7 +174,6 @@ export async function searchTrains(
     const journeys: HafasJourney[] = results.journeys ?? [];
     if (journeys.length === 0) return null;
 
-    // Extract prices and durations
     const prices: number[] = [];
     const durations: number[] = [];
     const operators = new Set<string>();
@@ -179,7 +207,9 @@ export async function searchTrains(
       operator: [...operators].slice(0, 3).join(", ") || "Rail",
     };
   } catch (err) {
-    console.warn("hafas search failed:", err instanceof Error ? err.message : err);
+    if (profileName === "db") {
+      console.warn(`hafas ${profileName} search failed, trying fallback:`, err instanceof Error ? err.message : err);
+    }
     return null;
   }
 }

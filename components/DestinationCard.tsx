@@ -324,10 +324,19 @@ export default function DestinationCard({
 
         {/* Train estimate (European routes only) */}
         {trainEstimate && (
-          <div className="mb-4 text-xs bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
+          <div className={`mb-4 text-xs bg-violet-50 border border-violet-200 rounded-xl px-3 py-2 transition-opacity duration-300 ${
+            !prefetchedTrainEstimate && staticTrainEstimate ? "opacity-70" : "opacity-100"
+          }`}>
             <div className="flex items-center gap-1.5 font-semibold text-violet-700 mb-0.5">
               <Train className="w-3.5 h-3.5" />
-              Train {"source" in trainEstimate && trainEstimate.source === "live" ? "price" : "estimate"} ({trainEstimate.currency})
+              {!prefetchedTrainEstimate && staticTrainEstimate ? (
+                <span className="flex items-center gap-1">
+                  Train estimate ({trainEstimate.currency})
+                  <Loader2 className="w-3 h-3 animate-spin text-violet-400" />
+                </span>
+              ) : (
+                <>Train {"source" in trainEstimate && trainEstimate.source === "live" ? "price" : "estimate"} ({trainEstimate.currency})</>
+              )}
             </div>
             <div className="text-violet-600">
               From ~{trainEstimate.minFare} · typical {trainEstimate.typicalFare}
@@ -343,9 +352,18 @@ export default function DestinationCard({
 
         {/* Accommodation estimate */}
         {accomEstimate && (
-          <div className="mb-4 text-xs bg-teal-50 border border-teal-200 rounded-xl px-3 py-2">
+          <div className={`mb-4 text-xs bg-teal-50 border border-teal-200 rounded-xl px-3 py-2 transition-opacity duration-300 ${
+            !prefetchedHotelEstimate && staticAccomEstimate ? "opacity-70" : "opacity-100"
+          }`}>
             <div className="flex items-center gap-1.5 font-semibold text-teal-700 mb-1">
-              🏨 Accommodation {"source" in accomEstimate && accomEstimate.source === "live" ? "prices" : "estimate"} / night ({accomEstimate.currency})
+              {!prefetchedHotelEstimate && staticAccomEstimate ? (
+                <span className="flex items-center gap-1">
+                  🏨 Accommodation estimate / night ({accomEstimate.currency})
+                  <Loader2 className="w-3 h-3 animate-spin text-teal-400" />
+                </span>
+              ) : (
+                <>🏨 Accommodation {"source" in accomEstimate && accomEstimate.source === "live" ? "prices" : "estimate"} / night ({accomEstimate.currency})</>
+              )}
             </div>
             <div className="flex gap-3 text-teal-600">
               <span>🛏 Hostel ~{accomEstimate.hostel}</span>

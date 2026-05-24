@@ -8,6 +8,7 @@
  */
 
 import { AccomEstimate } from "./accomEstimates";
+import { cityToAirport } from "./airports";
 
 const AMADEUS_BASE_TEST = "https://test.api.amadeus.com";
 const AMADEUS_BASE_PROD = "https://api.amadeus.com";
@@ -238,8 +239,17 @@ const CITY_TO_IATA: Record<string, string> = {
   "mexico city": "MEX", "sao paulo": "SAO", "buenos aires": "BUE",
   "sydney": "SYD", "melbourne": "MEL", "auckland": "AKL",
   "cape town": "CPT", "nairobi": "NBO", "johannesburg": "JNB",
+  // Extended coverage from airports.ts (airport codes work as city fallback)
+  "porto": "OPO", "krakow": "KRK", "kraków": "KRK",
+  "bucharest": "OTP", "sofia": "SOF", "zagreb": "ZAG",
+  "belgrade": "BEG", "sarajevo": "SJJ", "tirana": "TIA",
+  "skopje": "SKP", "thessaloniki": "SKG", "heraklion": "HER",
+  "manila": "MNL", "podgorica": "TGD",
 };
 
 export function cityToIataCode(city: string): string | null {
-  return CITY_TO_IATA[city.toLowerCase().trim()] ?? null;
+  const key = city.toLowerCase().trim();
+  if (CITY_TO_IATA[key]) return CITY_TO_IATA[key];
+  // Fallback: use airport code from airports.ts (works for most Amadeus searches)
+  return cityToAirport(city) ?? null;
 }
