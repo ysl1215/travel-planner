@@ -14,8 +14,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Install Python dependencies
-RUN pip install --no-cache-dir fast-flights yt-dlp --break-system-packages
+# Install Python dependencies (fast-flights is pinned to 2.2 — see requirements.txt;
+# 3.x is a breaking API change vs scripts/google_flights.py)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
 
 # Copy application code and build
 COPY . .

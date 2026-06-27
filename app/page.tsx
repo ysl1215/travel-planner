@@ -6,10 +6,11 @@ import DestinationCard from "@/components/DestinationCard";
 import BudgetSlider from "@/components/BudgetSlider";
 import ItineraryView from "@/components/ItineraryView";
 import ChatAgent from "@/components/ChatAgent";
+import RoutePlanner from "@/components/RoutePlanner";
 import { TripPlannerInput, Destination, BudgetSplit, TripItinerary, FlightOffer } from "@/lib/types";
 import { cityToAirport } from "@/lib/airports";
 import { getAccomEstimate } from "@/lib/accomEstimates";
-import { ArrowLeft, MapPin, Sparkles, PlayCircle, Plane } from "lucide-react";
+import { ArrowLeft, MapPin, Sparkles, PlayCircle, Plane, Route, ChevronDown } from "lucide-react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
 type AppStep = "form" | "destinations" | "itinerary";
@@ -32,6 +33,7 @@ export default function Home() {
   const [budgetSplit, setBudgetSplit] = useState<BudgetSplit | null>(null);
   const [itinerary, setItinerary] = useState<TripItinerary | null>(null);
   const [itineraryIndexed, setItineraryIndexed] = useState<{ indexed: boolean; count: number } | null>(null);
+  const [itineraryWarnings, setItineraryWarnings] = useState<{ rule: string; severity: string; detail: string }[]>([]);
   const [activeItineraryDest, setActiveItineraryDest] = useState<Destination | null>(null);
   const [isLoadingDestinations, setIsLoadingDestinations] = useState(false);
   const [isLoadingItinerary, setIsLoadingItinerary] = useState(false);
@@ -50,6 +52,7 @@ export default function Home() {
   }, [tripInput]);
 
   const [isLoadingDemo, setIsLoadingDemo] = useState(false);
+  const [showRoutePlanner, setShowRoutePlanner] = useState(false);
 
   // Parallel flight price state: destination id → price data
   const [allPrices, setAllPrices] = useState<Record<string, { flights: FlightOffer[]; priceLevel: string; error: string | null }>>({});
@@ -296,6 +299,7 @@ export default function Home() {
           const demoRes = await fetch("/api/demo?resource=itinerary");
           const { itinerary: demoItin } = await demoRes.json();
           setItinerary(demoItin);
+          setItineraryWarnings([]);
           setStep("itinerary");
           return;
         }
@@ -318,6 +322,7 @@ export default function Home() {
 
         setItinerary(data.itinerary);
         setItineraryIndexed({ indexed: !!data.indexed, count: data.attractionCount ?? 0 });
+        setItineraryWarnings(data.constraintReport?.violations ?? []);
         setStep("itinerary");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -424,6 +429,23 @@ export default function Home() {
               </div>
             </div>
             <TripPlannerForm onSubmit={handleFormSubmit} isLoading={isLoadingDestinations} />
+
+            {/* Standalone multi-city route optimizer */}
+            <div className="mt-6">
+              <button
+                onClick={() => setShowRoutePlanner((v) => !v)}
+                className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+              >
+                <Route className="w-4 h-4" />
+                Already know your cities? Optimize a multi-city route
+                <ChevronDown className={`w-4 h-4 transition-transform ${showRoutePlanner ? "rotate-180" : ""}`} />
+              </button>
+              {showRoutePlanner && (
+                <div className="mt-4">
+                  <RoutePlanner />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -535,6 +557,18 @@ export default function Home() {
                 )
               )}
             </div>
+            {itineraryWarnings.length > 0 && (
+              <div className="mb-4 text-sm bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                <div className="font-medium text-amber-800 mb-1">
+                  ⚠ {itineraryWarnings.length} itinerary {itineraryWarnings.length === 1 ? "caveat" : "caveats"} to double-check
+                </div>
+                <ul className="list-disc list-inside text-amber-700 space-y-0.5">
+                  {itineraryWarnings.map((w, i) => (
+                    <li key={i}>{w.detail}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <ItineraryView itinerary={itinerary} />
           </div>
         )}

@@ -3,38 +3,31 @@ import { spawn } from "child_process";
 import path from "path";
 import { FlightOffer } from "@/lib/types";
 import { searchFlights as kiwiSearch, isConfigured as kiwiConfigured } from "@/lib/kiwi";
+import { searchFlights as duffelSearch, isConfigured as duffelConfigured } from "@/lib/duffel";
 
-// ─── In-memory price cache (TTL: 20 minutes) ────────────────────────────────
+// ─── In-memory price cache (TTL: 20 minutes, bounded) ───────────────────────
 
-const CACHE_TTL_MS = 20 * 60 * 1000;
+import { createTtlCache } from "@/lib/ttlCache";
 
-interface CacheEntry {
-  data: { flights: FlightOffer[]; currentPriceLevel: string; error: string | null };
-  timestamp: number;
-}
+interface PriceData { flights: FlightOffer[]; currentPriceLevel: string; error: string | null }
 
-const priceCache = new Map<string, CacheEntry>();
+const priceCache = createTtlCache<PriceData>({ ttlMs: 20 * 60 * 1000, max: 200 });
 
 function getCacheKey(params: Record<string, string>): string {
   return `${params.origin}-${params.destination}-${params.departure}-${params.returnDate || ""}-${params.adults}-${params.seat}`;
 }
 
-function getCached(key: string): CacheEntry["data"] | null {
-  const entry = priceCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    priceCache.delete(key);
-    return null;
-  }
-  return entry.data;
+function getCached(key: string): PriceData | null {
+  return priceCache.get(key);
 }
 
 /**
  * GET /api/prices
  *
  * Fetches live flight prices. Provider priority:
- *   1. Kiwi.com Tequila API (if KIWI_API_KEY is set)
- *   2. fast-flights Python scraper (Google Flights, if Python + fast-flights installed)
+ *   1. Duffel official flight API (if DUFFEL_API_TOKEN is set)
+ *   2. Kiwi.com Tequila API (if KIWI_API_KEY is set)
+ *   3. fast-flights Python scraper (Google Flights, if Python + fast-flights installed)
  *
  * Required query params:
  *   origin      — IATA airport code, e.g. LHR
@@ -73,7 +66,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(cached);
   }
 
-  // Try Kiwi first, then fall back to fast-flights
+  // Provider chain: Duffel → Kiwi → fast-flights (each falls through on empty/error)
   const result = await fetchWithFallback({
     origin,
     destination,
@@ -100,7 +93,7 @@ export async function GET(request: NextRequest) {
 
   // Cache successful results
   if (result.flights.length > 0) {
-    priceCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    priceCache.set(cacheKey, responseData);
   }
 
   return NextResponse.json(responseData);
@@ -126,7 +119,35 @@ interface SearchResult {
 }
 
 async function fetchWithFallback(params: SearchParams): Promise<SearchResult> {
-  // 1. Try Kiwi.com Tequila API
+  // 1. Try Duffel (official flight API — durable primary)
+  if (duffelConfigured()) {
+    try {
+      const duffel = await duffelSearch({
+        origin: params.origin,
+        destination: params.destination,
+        departure: params.departure,
+        returnDate: params.returnDate,
+        adults: params.adults,
+        currency: params.currency,
+        seat: params.seat,
+      });
+
+      if (duffel.flights.length > 0) {
+        return {
+          flights: duffel.flights,
+          currentPriceLevel: inferPriceLevel(duffel.flights),
+          error: null,
+        };
+      }
+
+      // Duffel returned no results — fall through to Kiwi
+      console.warn("Duffel returned no flights, trying Kiwi fallback:", duffel.error);
+    } catch (err) {
+      console.warn("Duffel search failed, trying Kiwi fallback:", err);
+    }
+  }
+
+  // 2. Try Kiwi.com Tequila API
   if (kiwiConfigured()) {
     try {
       const kiwi = await kiwiSearch({
@@ -154,7 +175,7 @@ async function fetchWithFallback(params: SearchParams): Promise<SearchResult> {
     }
   }
 
-  // 2. Fallback: fast-flights Python scraper
+  // 3. Fallback: fast-flights Python scraper
   try {
     const result = await runFlightScript(params);
 

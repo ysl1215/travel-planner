@@ -3,20 +3,19 @@ import Ajv from "ajv";
 import destinationsSchema from "@/lib/schemas/destinations.schema.json";
 import { generate } from "@/lib/ai";
 import { requestJsonCorrection } from "@/lib/aiFix";
-import { buildDestinationPrompt } from "@/lib/prompts";
+import { buildDestinationPrompt, DESTINATION_SCHEMA_EXAMPLE } from "@/lib/prompts";
 import { TripPlannerInput, Destination } from "@/lib/types";
 import { rateLimit } from "@/lib/rateLimit";
 import { queueCity } from "@/lib/db";
-import { estimateFlightHours, estimateFlightHoursAsync, sanityCheckFlightHours } from "@/lib/flightTime";
+import { estimateFlightHours, estimateFlightHoursAsync, sanityCheckFlightHours, warmGeocodeCache } from "@/lib/flightTime";
 import { scoreAndSortDestinations } from "@/lib/preferenceMatch";
+import { createTtlCache } from "@/lib/ttlCache";
 
 const ajv = new Ajv();
 const validateDestinations = ajv.compile(destinationsSchema as any);
 
 // Response cache: avoids re-generating for identical inputs
-const SUGGEST_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const SUGGEST_CACHE_MAX = 50;
-const suggestCache = new Map<string, { data: any; timestamp: number }>();
+const suggestCache = createTtlCache<any>({ ttlMs: 10 * 60 * 1000, max: 50 });
 
 function buildCacheKey(input: TripPlannerInput): string {
   const sig = [
@@ -39,22 +38,11 @@ function buildCacheKey(input: TripPlannerInput): string {
 }
 
 function getCachedResponse(key: string): any | null {
-  const entry = suggestCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > SUGGEST_CACHE_TTL) {
-    suggestCache.delete(key);
-    return null;
-  }
-  return entry.data;
+  return suggestCache.get(key);
 }
 
 function setCachedResponse(key: string, data: any) {
-  if (suggestCache.size >= SUGGEST_CACHE_MAX) {
-    // Evict oldest entry
-    const oldest = suggestCache.keys().next().value;
-    if (oldest !== undefined) suggestCache.delete(oldest);
-  }
-  suggestCache.set(key, { data, timestamp: Date.now() });
+  suggestCache.set(key, data);
 }
 
 /**
@@ -67,6 +55,11 @@ async function correctAndFilterByTravelTime(
   homeCity: string,
   maxHours?: number
 ): Promise<Destination[]> {
+  // Warm the geocode cache for homeCity + all destination cities in one rate-limited
+  // pass (≤ N+1 network calls), so the per-destination estimateFlightHoursAsync calls
+  // below are pure cache hits instead of serialized 1.1s-staggered geocodes.
+  await warmGeocodeCache([homeCity, ...destinations.map((d) => d.city)]);
+
   // Correct flight hours using independent calculation
   for (const d of destinations) {
     // Try static table first (fast, no network)
@@ -135,12 +128,14 @@ Budget: ${input.budget} ${input.currency}
 Style: ${input.travelStyle || "balanced"}
 
 Return 3-6 destinations as a JSON array. Same schema as before:
-{"id":"string","country":"string","city":"string","airportCode":"3-letter IATA","rationale":"string","highlights":["..."],"estimatedFlightHours":0.0,"estimatedBudgetFit":"excellent|good|stretch","bestTimeToVisit":"string","vibeMatch":["..."],"imageQuery":"string"}`;
+${DESTINATION_SCHEMA_EXAMPLE}`;
 
   try {
     const raw = await generate(
       "You are an expert travel planner. You MUST only suggest cities within the flight time constraint. Respond with valid JSON only.",
-      retryPrompt
+      retryPrompt,
+      undefined,
+      { taskType: "suggest_retry" }
     );
 
     const match = raw.match(/\[[\s\S]*\]/);
@@ -189,12 +184,14 @@ ${input.country ? `- Preferred region: ${input.country}` : ""}
 Each destination's vibeMatch MUST include activities from the user's Likes list.
 
 Return a JSON array only. Each item:
-{"id":"string","country":"string","city":"string","airportCode":"3-letter IATA","rationale":"string","highlights":["..."],"estimatedFlightHours":0.0,"estimatedBudgetFit":"excellent|good|stretch","bestTimeToVisit":"string","vibeMatch":["..."],"imageQuery":"string"}`;
+${DESTINATION_SCHEMA_EXAMPLE}`;
 
   try {
     const raw = await generate(
       "You are an expert travel planner. Match the user's activity preferences precisely. Respond with valid JSON only.",
-      retryPrompt
+      retryPrompt,
+      undefined,
+      { taskType: "suggest_preference_retry" }
     );
 
     const match = raw.match(/\[[\s\S]*\]/);
@@ -261,9 +258,13 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = buildDestinationPrompt(input);
+    // 4-6 destination objects ≈ 800-1200 output tokens; the default 4096 ceiling is 3-4×
+    // headroom that just lets the model ramble. 2048 is comfortable for the array.
     const raw = await generate(
       "You are an expert travel planner with accurate knowledge of real-world flight durations. Always respond with valid JSON only.",
-      prompt
+      prompt,
+      undefined,
+      { tokenCandidates: [2048, 1024, 256], taskType: "suggest" }
     );
 
     // Robust JSON extraction and parsing for arrays
@@ -407,31 +408,9 @@ export async function POST(request: NextRequest) {
       function defaultFlightHours(homeCity?: string, destCity?: string) {
         if (!homeCity || !destCity) return 5;
         if (homeCity.toLowerCase() === destCity.toLowerCase()) return 0;
-        // Rough continent-pair heuristics keyed on home city
-        const home = homeCity.toLowerCase();
-        const dest = destCity.toLowerCase();
-        // Same-region pairs tend to be short; intercontinental long
-        const isAsia = (c: string) => /china|japan|korea|thailand|vietnam|singapore|india|malaysia|indonesia|philippines|taiwan|hong kong/.test(c);
-        const isEurope = (c: string) => /london|paris|berlin|madrid|rome|amsterdam|vienna|zurich|stockholm|oslo|copenhagen|warsaw|prague|budapest/.test(c);
-        const isAmericas = (c: string) => /new york|los angeles|chicago|toronto|montreal|mexico|sao paulo|buenos aires|miami|houston|dallas/.test(c);
-        const isMiddleEast = (c: string) => /dubai|doha|riyadh|abu dhabi|istanbul|cairo/.test(c);
-        const isAfrica = (c: string) => /johannesburg|nairobi|lagos|casablanca|cape town/.test(c);
-        const isOceania = (c: string) => /sydney|melbourne|auckland|brisbane/.test(c);
-
-        const sameRegion = (
-          (isAsia(home) && isAsia(dest)) ||
-          (isEurope(home) && isEurope(dest)) ||
-          (isAmericas(home) && isAmericas(dest))
-        );
-        if (sameRegion) return 3;
-        if ((isAsia(home) && isMiddleEast(dest)) || (isMiddleEast(home) && isAsia(dest))) return 7;
-        if ((isEurope(home) && isMiddleEast(dest)) || (isMiddleEast(home) && isEurope(dest))) return 5;
-        if ((isAmericas(home) && isEurope(dest)) || (isEurope(home) && isAmericas(dest))) return 9;
-        if ((isAsia(home) && isEurope(dest)) || (isEurope(home) && isAsia(dest))) return 11;
-        if ((isAsia(home) && isOceania(dest)) || (isOceania(home) && isAsia(dest))) return 8;
-        if ((isAmericas(home) && isAsia(dest)) || (isAsia(home) && isAmericas(dest))) return 13;
-        if (isAfrica(dest) || isAfrica(home)) return 9;
-        return 6; // safe intercontinental default
+        // Prefer the great-circle estimate from the coordinate table; fall back
+        // to a safe intercontinental default when a city isn't recognised.
+        return estimateFlightHours(homeCity, destCity) ?? 6;
       }
 
       // Auto-fill missing required fields with sensible defaults or derived values

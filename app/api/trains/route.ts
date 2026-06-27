@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchTrains, toTrainEstimate } from "@/lib/hafas";
 import { getTrainEstimate } from "@/lib/trainFares";
+import { createTtlCache } from "@/lib/ttlCache";
 
-// In-memory cache (TTL: 1 hour — train prices change slowly)
-const CACHE_TTL_MS = 60 * 60 * 1000;
-const cache = new Map<string, { data: any; timestamp: number }>();
+// In-memory cache (TTL: 1 hour — train prices change slowly, bounded)
+const cache = createTtlCache<any>({ ttlMs: 60 * 60 * 1000, max: 200 });
 
 /**
  * GET /api/trains?origin=Paris&destination=Amsterdam&date=2026-06-01
@@ -28,8 +28,8 @@ export async function GET(request: NextRequest) {
 
   const cacheKey = `${origin.toLowerCase()}-${destination.toLowerCase()}-${date}`;
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return NextResponse.json(cached.data);
+  if (cached) {
+    return NextResponse.json(cached);
   }
 
   // Try live search first
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
       operator: live.operator,
       source: "live" as const,
     };
-    cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    cache.set(cacheKey, responseData);
     return NextResponse.json(responseData);
   }
 
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
   const staticEstimate = getTrainEstimate(origin, destination);
   if (staticEstimate) {
     const responseData = { ...staticEstimate, duration: null, operator: null, source: "static" as const };
-    cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    cache.set(cacheKey, responseData);
     return NextResponse.json(responseData);
   }
 

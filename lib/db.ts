@@ -126,3 +126,30 @@ export function isCityIndexed(city: string): boolean {
   ).get(city);
   return !!row;
 }
+
+// ── Geocode cache ───────────────────────────────────────────────────────────
+
+/**
+ * Look up a cached geocode result for a city.
+ * Returns `[lat, lon]`, or `null` for a cached negative result (city not found),
+ * or `undefined` if the city has never been geocoded.
+ */
+export function getCachedGeocode(city: string): [number, number] | null | undefined {
+  const db = getDb();
+  if (!db) return undefined;
+  const row = db.prepare(
+    "SELECT lat, lon FROM geocode_cache WHERE city = ? COLLATE NOCASE"
+  ).get(city) as { lat: number | null; lon: number | null } | undefined;
+  if (!row) return undefined;
+  if (row.lat === null || row.lon === null) return null;
+  return [row.lat, row.lon];
+}
+
+/** Persist a geocode result (coords, or null for "not found") for a city. */
+export function saveGeocode(city: string, coords: [number, number] | null): void {
+  const db = getDb();
+  if (!db) return; // DB not initialised — silently skip
+  db.prepare(
+    "INSERT OR REPLACE INTO geocode_cache (city, lat, lon) VALUES (?, ?, ?)"
+  ).run(city, coords ? coords[0] : null, coords ? coords[1] : null);
+}

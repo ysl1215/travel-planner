@@ -1,2 +1,5 @@
 # SQLite database — build artifact, not source code
 attractions.db
+# WAL-mode sidecar files
+attractions.db-shm
+attractions.db-wal

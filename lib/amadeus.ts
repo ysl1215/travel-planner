@@ -270,12 +270,11 @@ const CITY_TO_IATA: Record<string, string> = {
   "mexico city": "MEX", "sao paulo": "SAO", "buenos aires": "BUE",
   "sydney": "SYD", "melbourne": "MEL", "auckland": "AKL",
   "cape town": "CPT", "nairobi": "NBO", "johannesburg": "JNB",
-  // Extended coverage from airports.ts (airport codes work as city fallback)
-  "porto": "OPO", "krakow": "KRK", "kraków": "KRK",
-  "bucharest": "OTP", "sofia": "SOF", "zagreb": "ZAG",
-  "belgrade": "BEG", "sarajevo": "SJJ", "tirana": "TIA",
-  "skopje": "SKP", "thessaloniki": "SKG", "heraklion": "HER",
-  "manila": "MNL", "podgorica": "TGD",
+  // NOTE: this map only needs entries whose metropolitan IATA code DIFFERS from the
+  // airport code (e.g. London → LON not LHR). Cities whose city code equals their airport
+  // code (Porto/Kraków/Sofia/Sarajevo/…) are intentionally NOT duplicated here — the
+  // cityToIataCode fallback to airports.cityToAirport covers them, so there's one source
+  // of truth per city instead of two hand-synced tables.
 };
 
 export function cityToIataCode(city: string): string | null {

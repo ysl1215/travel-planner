@@ -1,7 +1,7 @@
 # ✈️ Travel Planner AI
 
 [![CI](https://github.com/ysl1215/travel-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/ysl1215/travel-planner/actions/workflows/ci.yml)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fysl1215%2Ftravel-planner&env=OPENROUTER_API_KEY&envDescription=Get%20a%20free%20key%20at%20openrouter.ai%2Fkeys&envLink=https%3A%2F%2Fopenrouter.ai%2Fkeys&project-name=travel-planner-ai&repository-name=travel-planner-ai)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fysl1215%2Ftravel-planner&env=AGNES_API_KEY&envDescription=Agnes%20AI%20key%20(default%20LLM)%20-%20see%20agnes-ai.com%2Fdoc&envLink=https%3A%2F%2Fagnes-ai.com%2Fdoc%2Foverview&project-name=travel-planner-ai&repository-name=travel-planner-ai)
 
 An AI-powered travel planner that creates personalized destination suggestions and detailed day-by-day itineraries based on your budget, dates, travel preferences, and style. Designed for budget-conscious, off-the-beaten-path travelers.
 
@@ -13,7 +13,7 @@ An AI-powered travel planner that creates personalized destination suggestions a
 
 ### Option 1 — One-click deploy (fastest)
 
-Click **"Deploy with Vercel"** above, enter your `OPENROUTER_API_KEY` ([get a free key →](https://openrouter.ai/keys)), and deploy.
+Click **"Deploy with Vercel"** above, enter your `AGNES_API_KEY` ([Agnes AI docs →](https://agnes-ai.com/doc/overview)) — the default LLM provider — and deploy. (Any one AI provider key works; see the env table.)
 
 ### Option 2 — Self-host (required for flight prices + attraction scraping)
 
@@ -21,9 +21,9 @@ Vercel serverless functions can't spawn Python subprocesses. For the full experi
 
 ```bash
 # Railway / Render / Fly.io (all have free tiers)
-# Build command:  npm install && pip install fast-flights && npm run build
+# Build command:  npm install && pip install -r requirements.txt && npm run build
 # Start command:  npm run start
-# Env var:        OPENROUTER_API_KEY
+# Env var:        AGNES_API_KEY  (default LLM; or any one of NOVA_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY)
 ```
 
 ---
@@ -39,7 +39,8 @@ npm install
 cp .env.local.example .env.local
 
 # Python dependencies (for live flight prices)
-pip install fast-flights
+# fast-flights is pinned to 2.2 — 3.x is a breaking API change (see requirements.txt)
+pip install -r requirements.txt
 
 # Initialise the attraction index database (one-time)
 python3 scripts/init_db.py
@@ -79,8 +80,10 @@ Click **"Try Demo"** on the landing page to load a pre-built sample trip (London
 
 ### 3. Live Flight Prices
 - Per-card "Check live prices" button + "Compare All Flight Prices" batch fetch
-- **Primary:** [Kiwi.com Tequila API](https://tequila.kiwi.com) — 100 free searches/month, reliable structured data
-- **Fallback:** Google Flights scraping via [fast-flights](https://github.com/AWeirdDev/flights) — no API key, unlimited but less reliable
+- **Primary:** [Duffel](https://duffel.com) — official flight API (NDC + GDS), stable and supported. The durable, recommended source.
+- **Secondary:** [Kiwi.com Tequila API](https://tequila.kiwi.com) — 100 free searches/month, reliable structured data
+- **Fallback:** Google Flights scraping via [fast-flights](https://github.com/AWeirdDev/flights) — no API key, unlimited but less reliable. Pinned to `2.2` (3.x is a breaking API change; upstream maintainer has stepped back — treat as best-effort).
+- Provider chain: Duffel → Kiwi → fast-flights; each falls through on empty/error
 - Budget fit recalculated from `cheapestPrice × travelers` (not per-ticket)
 - 20-minute in-memory cache, 3-concurrent batch limit
 - Retry with exponential backoff on transient failures
@@ -104,6 +107,7 @@ Click **"Try Demo"** on the landing page to load a pre-built sample trip (London
 - Costs flagged as AI estimates throughout
 - Four tabs: Itinerary · Attractions · Food · Practical Tips
 - First 3 days shown initially; "Show all N days" expands
+- **Constraint validation** — after generation, a deterministic (non-LLM) validator checks the whole plan against hard constraints (day count vs date span, best-effort budget, allowed transport modes) and commonsense rules (no empty days, no duplicate venues, right-city activities, no hallucinated attractions vs the index). Hard violations trigger one fail-safe corrective re-prompt; remaining caveats surface as an amber badge above the itinerary (`lib/itineraryConstraints.ts`)
 
 ### 7. Attraction Index (pre-built, offline)
 - SQLite database (`data/attractions.db`) populated by offline scraper
@@ -119,10 +123,17 @@ Click **"Try Demo"** on the landing page to load a pre-built sample trip (London
 - Streaming responses via multi-provider AI
 
 ### 9. Multi-Provider AI with Automatic Fallback
-- OpenRouter → Gemini → Local model fallback chain
-- Provider health tracking with configurable TTLs
+- Agnes AI → Nova → OpenRouter → Gemini → Local model fallback chain (Agnes is the default primary; OpenAI-compatible)
+- Provider health tracking with configurable TTLs (shared `lib/healthCache.ts`)
 - Token candidate loop: `[4096, 1024, 256]` (reduced from 11 candidates)
 - Rate limiting: 10 req/min on suggest/itinerary, 20 req/min on chat (per IP)
+- Agnes + Nova + OpenRouter share one OpenAI-compatible engine (`lib/openaiCompatProvider.ts`); Gemini + Local route through the same model-loop, so all five get per-model health tracking + 429 backoff
+- Optional token/cost metering to a shared Postgres `token_usage` table (`lib/llmBudget.ts` + `lib/tokenUsageDb.ts`), tagged by operation (`taskType`). Meters non-streamed calls (suggest/itinerary/etc.); the chat stream is not metered yet. No-op unless `DATABASE_URL` is set. Agnes is internal/$0; other providers are priced.
+
+### 10. Multi-City Route Optimizer
+- Standalone tool (collapsible on the planning form): enter a known set of cities and get the shortest visiting order
+- Engine: open-path TSP (`lib/routeOrder.ts`, exact Held-Karp ≤10 cities, nearest-neighbor + 2-opt above) over a great-circle cost matrix (`lib/costMatrix.ts`); optional start/end anchors, routes around unavailable legs
+- Geocoding is warmed once per unique city (`warmGeocodeCache`), so a cold multi-city request scales with the city count, not the number of city pairs
 
 ---
 
@@ -178,17 +189,29 @@ python3 scripts/scrape_attractions.py --city "Lisbon" --dry-run
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | **Yes** | Free key from [openrouter.ai/keys](https://openrouter.ai/keys) |
+| `AGNES_API_KEY` | **Yes**¹ | Agnes AI key — default primary provider ([docs](https://agnes-ai.com/doc/overview)). OpenAI-compatible. |
+| `AGNES_MODEL` | No | Override Agnes model (default: `agnes-2.0-flash`) |
+| `AGNES_MODELS` | No | Comma-separated Agnes model fallback list |
+| `AGNES_BASE_URL` | No | Override base URL (default: `https://apihub.agnes-ai.com/v1`) |
+| `NOVA_API_KEY` | No¹ | Amazon Nova key — OpenAI-compatible Bearer gateway, first fallback after Agnes |
+| `NOVA_MODEL` | No | Override Nova model (default: `nova-pro-v1`; also `nova-premier-v1`/`nova-lite-v1`/`nova-micro-v1`/`nova-2-lite-v1`) |
+| `NOVA_MODELS` | No | Comma-separated Nova model fallback list |
+| `NOVA_BASE_URL` | No | Override base URL (default: `https://api.nova.amazon.com/v1`) |
+| `OPENROUTER_API_KEY` | No¹ | Free key from [openrouter.ai/keys](https://openrouter.ai/keys) — fallback provider |
 | `OPENROUTER_MODEL` | No | Override model (default: `meta-llama/llama-3.3-70b-instruct:free`) |
 | `OPENROUTER_MODELS` | No | Comma-separated model fallback list |
-| `AI_PROVIDER` | No | Primary provider: `openrouter` (default), `gemini`, `local` |
-| `AI_PROVIDER_ORDER` | No | Fallback order (default: `openrouter,gemini,local`) |
+| `AI_PROVIDER` | No | Primary provider: `agnes` (default), `nova`, `openrouter`, `gemini`, `local` |
+| `AI_PROVIDER_ORDER` | No | Fallback order (default: `agnes,nova,openrouter,gemini,local`) |
 | `GEMINI_API_KEY` | No | Google Gemini API key |
 | `LOCAL_MODEL_URL` | No | Local model server URL (default: `http://localhost:8000/generate`) |
-| `KIWI_API_KEY` | No | Kiwi.com Tequila API key for flight prices ([free signup](https://tequila.kiwi.com)). Falls back to `fast-flights` if not set. |
+| `DUFFEL_API_TOKEN` | No | Duffel official flight API token ([signup](https://duffel.com)). Durable primary flight source; tried before Kiwi. |
+| `KIWI_API_KEY` | No | Kiwi.com Tequila API key for flight prices ([free signup](https://tequila.kiwi.com)). Tried after Duffel, before `fast-flights`. |
 | `AMADEUS_CLIENT_ID` | No | Amadeus API client ID for live hotel prices ([free signup](https://developers.amadeus.com)). Falls back to static estimates. |
 | `AMADEUS_CLIENT_SECRET` | No | Amadeus API client secret |
 | `AMADEUS_ENV` | No | `test` (default, 2,000/month free) or `production` |
+| `DATABASE_URL` | No | Postgres connection string (shared Supabase pooled string) for LLM token metering. Unset = metering is a silent no-op. |
+
+¹ At least one AI provider key is required. Agnes is the default primary; if its key is absent the chain falls through to OpenRouter → Gemini → Local, so any single one works.
 
 ---
 
@@ -198,8 +221,8 @@ python3 scripts/scrape_attractions.py --city "Lisbon" --dry-run
 |---|---|
 | Framework | Next.js 16 (App Router) + TypeScript |
 | Styling | Tailwind CSS v4 |
-| AI | OpenRouter / Gemini / Local — multi-provider fallback |
-| Flight prices | [Kiwi.com Tequila API](https://tequila.kiwi.com) (primary) + [fast-flights](https://github.com/AWeirdDev/flights) fallback |
+| AI | Agnes AI (primary) / Nova / OpenRouter / Gemini / Local — multi-provider fallback |
+| Flight prices | [Duffel](https://duffel.com) (primary) → [Kiwi.com Tequila API](https://tequila.kiwi.com) → [fast-flights](https://github.com/AWeirdDev/flights) fallback |
 | Train prices | [hafas-client](https://github.com/public-transport/hafas-client) (live European rail) + static fallback |
 | Hotel prices | [Amadeus Hotel Search](https://developers.amadeus.com) (live) + static fallback |
 | Attraction index | SQLite (`better-sqlite3`) + Python scraper |
@@ -218,32 +241,51 @@ travel-planner/
 │   ├── page.tsx                    # Main app (form → destinations → itinerary)
 │   └── api/
 │       ├── suggest/route.ts        # AI destination suggestions + auto-queue cities
-│       ├── itinerary/route.ts      # AI itinerary generation + attraction index injection
+│       ├── itinerary/route.ts      # AI itinerary generation + index injection + constraint validation
 │       ├── chat/route.ts           # Streaming AI chat (sliding window)
-│       ├── prices/route.ts         # Google Flights scraper (cache + concurrency limit)
-│       ├── airport/route.ts        # City → IATA code (static + AI fallback)
+│       ├── prices/route.ts         # Flight prices: Duffel → Kiwi → fast-flights (bounded cache)
+│       ├── route-order/route.ts    # Multi-city route optimizer (open-path TSP)
+│       ├── airport/route.ts        # City → IATA code (static + cached AI fallback)
 │       ├── scrape-status/route.ts  # Scrape queue status
 │       └── demo/route.ts           # Pre-seeded mock data
 ├── components/
 │   ├── TripPlannerForm.tsx         # Step 1: preferences form (incl. hidden gems toggle)
+│   ├── RoutePlanner.tsx            # Multi-city route optimizer UI (collapsible on form step)
 │   ├── DestinationCard.tsx         # Card with flight prices, train + accom estimates
 │   ├── BudgetSlider.tsx            # Budget allocation with lazy-loaded pie chart
 │   ├── BudgetPieChart.tsx          # Recharts pie (dynamically imported)
 │   ├── ItineraryView.tsx           # Itinerary tabs with cluster cards
 │   ├── ClusterCard.tsx             # Half-day / full-day option selector
+│   ├── ErrorBoundary.tsx           # Destination grid error boundary
 │   └── ChatAgent.tsx               # Floating AI chat
 ├── lib/
-│   ├── ai.ts                       # Multi-provider AI abstraction
-│   ├── openrouter.ts               # OpenRouter client (backoff, health tracking)
-│   ├── gemini.ts                   # Gemini client
-│   ├── localModel.ts               # Local model client
+│   ├── ai.ts                       # Multi-provider AI abstraction (provider-level health cache)
+│   ├── openaiCompatProvider.ts     # Shared OpenAI-compatible engine (model loop, token descent, 429 backoff, SSE)
+│   ├── agnes.ts                    # Agnes client (thin config wrapper over the shared engine)
+│   ├── nova.ts                     # Amazon Nova client (thin config wrapper over the shared engine)
+│   ├── openrouter.ts               # OpenRouter client (thin config wrapper; richer error inspection)
+│   ├── gemini.ts                   # Gemini client (native shape, routed through the shared model-loop)
+│   ├── localModel.ts               # Local model client (native shape, routed through the shared model-loop)
+│   ├── healthCache.ts              # Shared TTL failure-blacklist (per-provider + per-model)
+│   ├── llmBudget.ts                # Token-metering pure logic (rates, normalize usage, cost, never-throws logUsage)
+│   ├── tokenUsageDb.ts             # Server-only pg writer to the shared token_usage table (no-op without DATABASE_URL)
+│   ├── ttlCache.ts                 # Shared bounded TTL response cache (suggest/itinerary/prices/trains/hotels)
 │   ├── aiFix.ts                    # JSON correction (schema hints, preferShortFirst)
 │   ├── airports.ts                 # City → IATA static map
-│   ├── prompts.ts                  # Prompt builders (destination, itinerary, chat)
-│   ├── types.ts                    # TypeScript types (incl. ItineraryCluster)
-│   ├── db.ts                       # SQLite access layer (better-sqlite3)
-│   ├── attractionContext.ts        # Formats DB attractions for prompt injection
+│   ├── amadeus.ts                  # Amadeus hotel search + metro IATA codes
+│   ├── duffel.ts                   # Duffel official flight API provider
+│   ├── kiwi.ts                     # Kiwi.com Tequila flight provider
+│   ├── flightTime.ts               # Great-circle flight hours + Nominatim geocode (L1/L2 cache, warmGeocodeCache)
+│   ├── routeOrder.ts               # Open-path TSP (Held-Karp + nearest-neighbor/2-opt)
+│   ├── costMatrix.ts               # Asymmetric great-circle cost matrix for route ordering
+│   ├── prompts.ts                  # Prompt builders (destination, itinerary, chat) + shared schema example
+│   ├── types.ts                    # TypeScript types (incl. ItineraryCluster, RouteSegment)
+│   ├── db.ts                       # SQLite access layer (better-sqlite3; geocode_cache)
+│   ├── attractionContext.ts        # Formats DB attractions for prompt injection (trip-length-scaled)
+│   ├── itineraryConstraints.ts     # Deterministic post-gen constraint validator (hard + commonsense)
+│   ├── preferenceMatch.ts          # Scores/sorts destinations against user preferences
 │   ├── rateLimit.ts                # Sliding-window in-memory rate limiter
+│   ├── hafas.ts                    # Live European train search (hafas-client)
 │   ├── trainFares.ts               # Static European train fare estimates
 │   ├── accomEstimates.ts           # Static accommodation cost estimates (70+ cities)
 │   └── schemas/
@@ -252,10 +294,11 @@ travel-planner/
 ├── data/
 │   └── attractions.db              # SQLite attraction index (gitignored)
 ├── scripts/
-│   ├── init_db.py                  # Create/migrate attractions.db
+│   ├── init_db.py                  # Create/migrate attractions.db (geocode_cache + schema_version)
 │   ├── scrape_attractions.py       # Wikivoyage + YouTube + trending → SQLite
-│   ├── google_flights.py           # Google Flights price scraper
+│   ├── google_flights.py           # fast-flights (Google Flights) price scraper, pinned 2.2
 │   └── choose-ai-provider.js       # Switch AI provider
+├── requirements.txt                # Python deps (fast-flights==2.2 pinned)
 └── Dockerfile                      # Node 20 + Python 3.11, single-stage
 ```
 
@@ -265,8 +308,13 @@ travel-planner/
 
 ### P1 — Remaining performance
 
-- [ ] **Reduce OpenRouter token candidate loop further** — streaming path still tries up to 3 token budgets × N models. Consider a single attempt with a generous budget for streaming.
+- [x] ~~**Duplicated provider code / inconsistent fallback**~~ (done 2026-06-24) — Agnes + OpenRouter merged into one shared engine (`lib/openaiCompatProvider.ts`); Gemini + Local brought to parity (per-model health cache + 429 backoff). 3 TTL-blacklist caches → one `lib/healthCache.ts`.
+- [x] ~~**Multi-city geocoding O(n²) latency cliff**~~ (done 2026-06-24) — `warmGeocodeCache` geocodes unique cities once; route-order cold time scales with city count, warm is ~instant.
+- [x] ~~**No itinerary response cache (most expensive call)**~~ (done 2026-06-24) — bounded TTL cache (`lib/ttlCache.ts`); identical re-request serves from cache instead of re-running the LLM.
+- [ ] **Reduce token candidate loop further** — streaming path still tries up to 3 token budgets × N models. Consider a single attempt with a generous budget for streaming.
 - [ ] **`better-sqlite3` native module** — requires compilation on deploy. Add `npm install` post-build step or use `@libsql/client` for edge compatibility.
+- [ ] **Multi-instance cache durability** — response caches are per-process Maps; on serverless they don't share across instances. Only `geocode_cache` (SQLite) is cross-instance durable. Consider Redis or extending the SQLite pattern if deployed at scale.
+- [ ] **Train fetch fans out to all destinations serially across 3 hafas profiles** — `searchTrains` tries DB→ÖBB→SNCB in series, and the client fires `/api/trains` for non-European destinations too. Pre-filter or `Promise.any` (deferred — gated behind the destinations step, not the hot path).
 
 ### P2 — Token & quality
 
@@ -296,6 +344,27 @@ travel-planner/
 ---
 
 ## 📝 Changelog
+
+### Session 2026-06-24 — Multi-city UI + performance & cleanup pass
+
+**Feature**
+- Multi-city route optimizer UI (`components/RoutePlanner.tsx`) wired into the form step — the `lib/routeOrder.ts` engine + `/api/route-order` endpoint were already built; this exposes them.
+
+**Performance — latency**
+- `warmGeocodeCache()` geocodes unique cities once (rate-limit gate moved inside `geocodeCity`, so cache hits never wait); killed the O(n²) per-pair stagger in `buildCostMatrix`. Route-order: ~17s→~4s cold (6 cities), ~instant warm.
+- Itinerary response cache (`lib/ttlCache.ts`, 10min/50-LRU): identical re-request 37.7s→0.004s (live-measured).
+- Airport-code AI fallback cached; suggest geocoding de-serialized; prices/trains/hotels caches now bounded (were unbounded Maps).
+
+**Performance — tokens**
+- Itinerary example JSON trimmed to a type-skeleton; constraint re-prompt now diff-style (prior JSON + violations, not the full prompt+context); attraction context scales with trip length (`min(20, tripDays*5)`); suggest budget 4096→2048; destination schema example deduped to one constant.
+
+**Cleanup — provider layer**
+- Merged `agnes.ts` + `openrouter.ts` into a shared OpenAI-compatible engine (`lib/openaiCompatProvider.ts`); both are now ~50-line config wrappers (openrouter 351→~85 lines).
+- 3 hand-rolled TTL failure-blacklists → one `lib/healthCache.ts`.
+- `gemini.ts` + `localModel.ts` routed through the shared model-loop — gained per-model health cache + 429 backoff (previously threw immediately).
+- Removed the duplicated "extended coverage" IATA block in `amadeus.ts` (pure duplication of the `cityToAirport` fallback).
+
+**Tests:** +19 (`ttlCache` 4, `healthCache` 6, `openaiCompatProvider` 9) → 123 total. tsc clean, `next build` clean, full live smoke via Agnes.
 
 ### Session 2026-05-12
 

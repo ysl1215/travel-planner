@@ -11,14 +11,18 @@ import { Attraction } from "@/lib/db";
  *
  * @param attractions  All attractions for the city from the DB index
  * @param preferences  User's liked activities and style (for relevance filtering)
- * @param maxItems     Cap to avoid blowing the prompt token budget (default 20)
+ * @param maxItems     Cap to avoid blowing the prompt token budget. When tripDays is
+ *                     provided, the cap scales with trip length (~5/day, ceiling 20) so a
+ *                     short trip doesn't carry 20 candidates it can never schedule.
  */
 export function buildAttractionContext(
   attractions: Attraction[],
-  preferences: { likedActivities: string[]; travelStyle: string; preferHiddenGems?: boolean },
-  maxItems = 20
+  preferences: { likedActivities: string[]; travelStyle: string; preferHiddenGems?: boolean; tripDays?: number },
+  maxItems?: number
 ): string {
   if (!attractions.length) return "";
+
+  const cap = maxItems ?? (preferences.tripDays ? Math.min(20, Math.max(5, preferences.tripDays * 5)) : 20);
 
   // Score each attraction for relevance to user preferences
   const scored = attractions.map((a) => {
@@ -55,7 +59,7 @@ export function buildAttractionContext(
   // Sort by score desc, take top N
   const top = scored
     .sort((x, y) => y.score - x.score)
-    .slice(0, maxItems)
+    .slice(0, cap)
     .map((s) => s.a);
 
   // Format as compact lines — one attraction per line to minimise tokens

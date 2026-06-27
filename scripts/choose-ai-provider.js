@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const providers = ['openrouter', 'gemini', 'local'];
+const providers = ['agnes', 'nova', 'openrouter', 'gemini', 'local'];
 const arg = process.argv[2];
 
 if (!arg) {
@@ -27,22 +27,32 @@ if (fs.existsSync(envPath)) {
   content = fs.readFileSync(envPath, 'utf8');
 }
 
-const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
+// Preserve blank lines and comments — only rewrite the AI_PROVIDER line.
+const hadTrailingNewline = content === '' || content.endsWith('\n');
+const lines = content.replace(/\n$/, '').split(/\r?\n/);
+// Match an AI_PROVIDER assignment with optional leading whitespace/`export`.
+const providerRe = /^\s*(?:export\s+)?AI_PROVIDER\s*=/;
 let found = false;
 const newLines = lines.map(line => {
-  if (line.startsWith('AI_PROVIDER=')) {
+  if (providerRe.test(line)) {
     found = true;
     return `AI_PROVIDER=${provider}`;
   }
   return line;
 });
 
-if (!found) newLines.push(`AI_PROVIDER=${provider}`);
+if (!found) {
+  // Drop a leading empty element from an empty file so we don't write a blank first line.
+  if (newLines.length === 1 && newLines[0] === '') newLines.length = 0;
+  newLines.push(`AI_PROVIDER=${provider}`);
+}
 
-fs.writeFileSync(envPath, newLines.join('\n') + '\n');
+fs.writeFileSync(envPath, newLines.join('\n') + (hadTrailingNewline ? '\n' : ''));
 console.log(`Updated ${envPath}: AI_PROVIDER=${provider}`);
 
 const keyHints = {
+  agnes: 'AGNES_API_KEY',
+  nova: 'NOVA_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   gemini: 'GEMINI_API_KEY',
   local: 'LOCAL_MODEL_URL (default: http://localhost:8000/generate)',

@@ -8,6 +8,7 @@ import sqlite3
 import pathlib
 
 DB_PATH = pathlib.Path(__file__).parent.parent / "data" / "attractions.db"
+SCHEMA_VERSION = 2  # bump when adding migrations below
 
 def init():
     con = sqlite3.connect(DB_PATH)
@@ -47,6 +48,18 @@ def init():
             UNIQUE(city)
         );
 
+        CREATE TABLE IF NOT EXISTS geocode_cache (
+            city        TEXT PRIMARY KEY COLLATE NOCASE,
+            lat         REAL,             -- NULL if the lookup found nothing
+            lon         REAL,
+            cached_at   TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version     INTEGER NOT NULL,
+            applied_at  TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_attractions_city ON attractions(city);
         CREATE INDEX IF NOT EXISTS idx_queue_status    ON scrape_queue(status);
     """)
@@ -60,8 +73,16 @@ def init():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Record the current schema version (only insert if newer than the last)
+    row = con.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    current = row[0] if row and row[0] is not None else 0
+    if current < SCHEMA_VERSION:
+        con.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+        con.commit()
+        print(f"Migration: schema version {current} -> {SCHEMA_VERSION}")
+
     con.close()
-    print(f"Database initialised at {DB_PATH}")
+    print(f"Database initialised at {DB_PATH} (schema v{SCHEMA_VERSION})")
 
 if __name__ == "__main__":
     init()

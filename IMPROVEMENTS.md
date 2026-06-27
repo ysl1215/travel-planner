@@ -1,10 +1,57 @@
 # Improvement Opportunities
 
-> Last updated: 2026-05-12
+> Last updated: 2026-06-26
 
 ---
 
-## Addressed this session
+## Addressed 2026-06-26 (LLM token metering — v1)
+
+- [x] **Runtime LLM token/cost metering** — applied the cross-project changeset (shared Supabase `token_usage`, `project="travel-planner"`). Added `lib/llmBudget.ts` + `lib/tokenUsageDb.ts`, installed `pg`/`@types/pg`, hooked `logUsage` into both `generate()` success paths in `openaiCompatProvider.ts`, threaded `taskType` through 7 call sites. **v1 = non-streamed only** (chat `stream()` left un-metered with a code comment — under-counts, never mis-counts). No-op without `DATABASE_URL`. tsc/tests/build clean. Not committed; no live-DB run yet. Upgrade-to-full-streaming trigger documented in SESSION_LOG.
+
+## Addressed 2026-06-26 (validation + Nova provider)
+
+- [x] **Geocode sanity-check never exercised** — added 5 tests to `flightTime.test.ts` pinning the `sanityCheckFlightHours` guard's real decision boundary (`claimedHours < minHours * 0.7`, both sides), the reverse-direction region-pair fallback, the obscure-city-via-country headline case (Kanazawa caught through "Japan"), and the one documented blind spot (no region-pair either direction, e.g. Delhi→Kenya — uncorrectable, acceptable). 128/128 green.
+- [x] **Added Amazon Nova as a fallback provider** — `lib/nova.ts` (thin config wrapper over `lib/openaiCompatProvider`, mirrors `agnes.ts`); chain now `agnes → nova → openrouter → gemini → local` with Agnes still primary. Default model `nova-pro-v1`; documented in README + `.env.local.example` + `choose-ai-provider.js`. Live call deferred (no real key yet; same gate as Duffel).
+- **Parked (user decision):** streaming token-loop trim (backs interactive chat, not an obvious win) and multi-instance cache durability (premature; geocode L2 already SQLite).
+
+---
+
+## Addressed 2026-06-24 (multi-city UI + performance & cleanup pass)
+
+A three-bucket pass over code accumulated across the prior two sessions. tsc clean, **123/123 tests** (104 baseline + 19 new), `next build` exit 0, full live smoke via Agnes (suggest / itinerary / route-order / airport / chat-stream all 200).
+
+**Multi-city route optimizer UI**
+- [x] **Route-ordering engine had no UI (Phase C deferred)** — Added `components/RoutePlanner.tsx`: a standalone, collapsible tool on the planning form. Add/remove city chips, optional start/end anchors, calls `/api/route-order`, renders the ordered route + per-leg segments + total hours + unresolved-fallback warnings. Deliberately not threaded through the suggest→itinerary state machine (the endpoint stands alone).
+
+**Bucket 1 — runtime latency**
+- [x] **O(n²) geocode cliff in `buildCostMatrix`** — every city *pair* was geocoded serially with a 1.1s stagger that fired even on cache hits. Added `warmGeocodeCache()` (`lib/flightTime.ts`) to geocode unique cities once, and moved the rate-limit gate *inside* `geocodeCity` so cache hits never wait. Route-order: ~17s→~4s cold (6 cities), **0.008s warm** (live-measured). Suggest geocoding de-serialized the same way.
+- [x] **Itinerary route had no response cache (most expensive call, 8192-token budget)** — Added `lib/ttlCache.ts` (bounded TTL cache) and wired a 10min/50-LRU cache into `app/api/itinerary/route.ts`, keyed on destination+input+budgetSplit. Live-measured **37.7s→0.004s** on identical re-request (byte-identical output).
+- [x] **Airport-code AI fallback uncached** — `/api/airport` now caches resolved codes (7.1s→0.003s). It re-fired on every `tripInput` change client-side.
+- [x] **Unbounded response caches (memory leak)** — prices/trains/hotels Maps had TTLs but no size cap; now bounded via the shared `ttlCache`.
+
+**Bucket 2 — token usage**
+- [x] **Itinerary example JSON taught the schema twice** — trimmed the ~600-700-token populated example to a type-skeleton (the JSON schema already enforces structure).
+- [x] **Constraint re-prompt resent the full prompt + attraction context** — now diff-style (prior itinerary JSON + violation list), ~50% input cut on that path; existing fail-safe (only adopt if violations strictly reduced) preserved.
+- [x] **Fixed attraction-context size regardless of trip length** — `maxItems` now scales `min(20, tripDays*5)`.
+- [x] **Over-provisioned suggest budget** — 4096→2048 (4-6 destinations ≈ 800-1200 output tokens).
+- [x] **Destination schema example duplicated in 3 prompts** — extracted to one `DESTINATION_SCHEMA_EXAMPLE` constant in `lib/prompts.ts`.
+
+**Bucket 3 — dead code / dedup**
+- [x] **`agnes.ts` and `openrouter.ts` were ~300 lines of near-identical code** — merged into a shared OpenAI-compatible engine (`lib/openaiCompatProvider.ts`: model loop + token descent + 402-continue + 429 backoff + SSE parse). Both are now ~50-line config wrappers (openrouter 351→~85 lines). OpenRouter's richer error-body inspection and attribution headers preserved via config.
+- [x] **3 hand-rolled TTL failure-blacklists** (ai.ts per-provider + agnes/openrouter per-model) — consolidated into one `lib/healthCache.ts`.
+- [x] **Gemini + Local lacked the health cache / 429 backoff the others had** — routed both through the shared model-loop (`runWithDescentAndHealth`), keeping their native request shapes. Behavioral change: they previously threw immediately on 429/404; now they retry 429 with backoff and blacklist on 402/404.
+- [x] **Two hand-synced IATA tables** — removed the redundant "extended coverage" block in `amadeus.ts` (verified pure duplication of the `cityToAirport` fallback). Did **not** do a full single-map merge — metro codes (LON) vs airport codes (LHR) differ and a wrong metro code silently breaks hotel search; the risk outweighs the cosmetic gain.
+- Deviation: kept `pathCost` / `checkReachability` / `hasCoordinates` exported and `defaultFlightHours` inline — they're each covered by passing unit tests, so de-exporting would delete working coverage for harmless utilities.
+
+## Addressed 2026-06-21
+
+- [x] **No way to order a known set of cities into an optimal multi-city route** (Phases A+B) — Added `lib/routeOrder.ts` (pure open-path TSP: Held-Karp exact ≤10 cities, nearest-neighbor+2-opt above; asymmetric costs, Infinity for unavailable/infrequent legs, start/end anchors) and `lib/costMatrix.ts` (builds the asymmetric matrix from great-circle flight hours, marks unavailable legs Infinity). 16 tests incl. brute-force optimality checks. Phase C: the `app/api/route-order` endpoint is now wired and live-tested (cities in → ordered route + segments out, routes around unavailable legs); only the UI (multi-city input mode + route display) remains deferred.
+- [x] **No durable flight-price source (Kiwi signup discontinued, fast-flights is a fragile pinned scraper)** — Added a Duffel official-flight-API provider (`lib/duffel.ts`) mirroring the Kiwi contract, inserted as the primary in the `prices/route.ts` chain (Duffel → Kiwi → fast-flights), gated on `DUFFEL_API_TOKEN` so it's a no-op until configured. API shape verified against Duffel's official docs. 8 fetch-mocked unit tests; tsc + `next build` clean.
+- [x] **fast-flights fallback exposed to a breaking upstream change** — `scripts/google_flights.py` uses the fast-flights 2.x API, but the dependency was unpinned in 3 places (README ×2, Dockerfile), so a fresh build would pull 3.x (breaking `create_query`/`FlightQuery` API; upstream maintainer stepped back, issue #92). Created `requirements.txt` pinning `fast-flights==2.2` (verified as the last 2.x release exposing the API the script uses); Dockerfile + README now install via `-r requirements.txt`; added breaking-change/maintainer caveats in 3 spots. Durable fix is an official flight API (Duffel) — `IMPLEMENTATION_PLAN.md` #3.
+- [x] **Live validation via Agnes (2026-06-21)** — full pipeline (suggest → itinerary + constraint validator + re-prompt → chat streaming) confirmed working end-to-end against the real API. Caught + fixed 3 bugs: removed the noisy `wrong_city` rule (12 false positives, 0 true), relaxed `day_count` for the nights-vs-days ambiguity, fixed `AI_PROVIDER` comma-list parsing, and raised the itinerary token budget to 8192 (default 4096 truncated full-plan JSON).
+- [x] **Itineraries pass individual checks but fail their conjunction** (TravelPlanner ICML'24 finding) — Added a deterministic, non-LLM post-generation constraint validator (`lib/itineraryConstraints.ts`): hard constraints (day-count vs date span, best-effort budget, allowed transport modes) + commonsense rules (no empty days, no duplicate venues, right-city activities, no hallucinated attractions vs the index). Wired into `app/api/itinerary/route.ts` (`respondWithItinerary`) with a fail-safe single corrective re-prompt on hard violations; `constraintReport` returned in the response and surfaced as an amber caveats badge in `app/page.tsx`. 18 unit tests; tsc + `next build` clean. NOTE: the re-prompt LLM path is unverified live (blocked on OpenRouter key) but fail-safe (falls back to original, never blocks delivery).
+
+## Addressed earlier (pre-2026-06-21)
 
 - [x] **Flight prices unreliable (fast-flights)** — Added Kiwi.com Tequila API as primary provider with fast-flights as fallback (`lib/kiwi.ts`, `app/api/prices/route.ts`).
 - [x] **Destinations ignore maxTravelHours** — Added independent great-circle flight time validation (`lib/flightTime.ts`), prompt calibration with reference times, and server-side correction + filtering (`correctAndFilterByTravelTime`).

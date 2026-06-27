@@ -20,7 +20,13 @@ Outputs a JSON object to stdout:
     }
 
 Install requirements:
-    pip install fast-flights
+    pip install -r requirements.txt   # installs fast-flights==2.2
+
+NOTE: This script targets the fast-flights 2.x API
+(`get_flights(flight_data=[FlightData(...)], trip=..., passengers=..., seat=..., fetch_mode=...)`).
+fast-flights 3.0 (2026-06-13) is a BREAKING change to a `create_query`/`FlightQuery` API and the
+upstream maintainer has stepped back (issue #92). The dependency is pinned to ==2.2 in
+requirements.txt — do NOT upgrade to 3.x without rewriting the get_flights() call below.
 """
 
 import argparse
@@ -71,7 +77,7 @@ def main():
             "current_price_level": "",
             "error": (
                 "fast-flights is not installed. "
-                "Run: pip install fast-flights"
+                "Run: pip install -r requirements.txt"
             )
         }))
         sys.exit(0)

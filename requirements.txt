@@ -1,0 +1,12 @@
+# Python runtime dependencies (live flight prices + attraction scraper).
+# Installed in the Docker image and for local "live prices" support.
+
+# Google Flights scraper used as the flight-price fallback (scripts/google_flights.py).
+# PINNED to 2.2 deliberately: fast-flights 3.0 (2026-06-13) is a BREAKING API change
+# (create_query/FlightQuery) vs the get_flights(flight_data=[...]) API this project uses,
+# and the upstream maintainer has stepped back from the project (issue #92). Do NOT bump
+# to 3.x without migrating scripts/google_flights.py first. See IMPLEMENTATION_PLAN.md.
+fast-flights==2.2
+
+# YouTube transcript/search extraction for the attraction scraper (scripts/scrape_attractions.py).
+yt-dlp

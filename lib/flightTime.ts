@@ -232,53 +232,103 @@ export function estimateFlightHours(originCity: string, destinationCity: string)
 
 // ─── Nominatim geocoding fallback ───────────────────────────────────────────
 
-// Cache geocoded results to avoid repeat lookups within the same server lifetime
+import { getCachedGeocode, saveGeocode } from "./db";
+
+// L1 in-memory cache (per server lifetime); L2 is the SQLite geocode_cache table.
 const geocodeCache = new Map<string, [number, number] | null>();
+
+// Serialize ACTUAL Nominatim network calls to respect its ~1 req/s usage policy.
+// Cache hits never enter this gate, so a warmed cache incurs no delay — this is what
+// turns the old per-pair 1.1s stagger (paid even on cache hits) into one delay per
+// unique uncached city.
+let nominatimGate: Promise<void> = Promise.resolve();
+function rateLimitedGeocode(fn: () => Promise<[number, number] | null>): Promise<[number, number] | null> {
+  const run = nominatimGate.then(fn);
+  // The next queued network call waits 1.1s after this one settles (success or fail).
+  nominatimGate = run.then(() => delay(1_100), () => delay(1_100));
+  return run;
+}
+
+// Returns coords on a hit, null on a CONFIRMED "not found" (HTTP ok, empty result).
+// THROWS on a network/timeout error so the caller can avoid persisting a negative result
+// for a transient failure (preserving the original behavior).
+async function fetchGeocode(city: string): Promise<[number, number] | null> {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "travel-planner-ai/1.0" },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data.length) {
+      return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+    }
+  }
+  return null;
+}
 
 async function geocodeCity(city: string): Promise<[number, number] | null> {
   const key = city.toLowerCase().trim();
   if (geocodeCache.has(key)) return geocodeCache.get(key)!;
 
+  // L2: SQLite cache (undefined = never looked up, null = cached "not found")
+  const cached = getCachedGeocode(key);
+  if (cached !== undefined) {
+    geocodeCache.set(key, cached);
+    return cached;
+  }
+
+  // Only actual network fetches are rate-limited and serialized.
+  let coords: [number, number] | null;
   try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "travel-planner-ai/1.0" },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) {
-      geocodeCache.set(key, null);
-      return null;
-    }
-    const data = await res.json();
-    if (!data.length) {
-      geocodeCache.set(key, null);
-      return null;
-    }
-    const coords: [number, number] = [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-    geocodeCache.set(key, coords);
-    return coords;
+    coords = await rateLimitedGeocode(() => fetchGeocode(city));
   } catch {
+    // network/timeout error — cache only in L1 for this process; do NOT persist a
+    // negative to L2 so a transient failure isn't cached permanently
     geocodeCache.set(key, null);
     return null;
   }
+  geocodeCache.set(key, coords);
+  saveGeocode(key, coords); // persist both hits and confirmed "not found"
+  return coords;
+}
+
+/**
+ * Pre-warm the geocode cache for a set of cities, hitting Nominatim at most once per
+ * unique uncached city (network calls serialized ~1.1s apart by the shared gate).
+ * After this resolves, estimateFlightHoursAsync for any of these cities is a cache hit.
+ * Cities already in the static table or cache cost nothing.
+ */
+export async function warmGeocodeCache(cities: string[]): Promise<void> {
+  const seen = new Set<string>();
+  const pending: Promise<unknown>[] = [];
+  for (const city of cities) {
+    const key = city.toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (getCoords(city)) continue; // static table — no network needed
+    pending.push(geocodeCity(city)); // enqueues a rate-limited fetch if uncached
+  }
+  await Promise.all(pending);
 }
 
 /**
  * Async version of estimateFlightHours that falls back to Nominatim geocoding
  * for cities not in the static table. Use this in server-side API routes.
+ *
+ * For multi-city callers, call warmGeocodeCache(cities) first so these lookups are
+ * pure cache hits instead of serialized network round-trips.
  */
 export async function estimateFlightHoursAsync(originCity: string, destinationCity: string): Promise<number | null> {
   // Try static table first (no network call)
   const staticResult = estimateFlightHours(originCity, destinationCity);
   if (staticResult !== null) return staticResult;
 
-  // Geocode both cities in parallel (staggered by 1.1s for Nominatim rate limit)
-  const originCoords = getCoords(originCity);
-  const destCoords = getCoords(destinationCity);
-
+  // Geocode both cities. The rate-limit gate lives inside geocodeCity, so cache hits
+  // return immediately and only genuine network fetches serialize.
   const [origin, dest] = await Promise.all([
-    originCoords ?? geocodeCity(originCity),
-    destCoords ?? delay(1_100).then(() => geocodeCity(destinationCity)),
+    getCoords(originCity) ?? geocodeCity(originCity),
+    getCoords(destinationCity) ?? geocodeCity(destinationCity),
   ]);
 
   if (!origin || !dest) return null;

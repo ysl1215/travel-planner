@@ -120,4 +120,41 @@ describe("sanityCheckFlightHours", () => {
     const result = sanityCheckFlightHours("London", "France", 1.5);
     expect(result).toBeNull();
   });
+
+  // The guard only fires when claimed < minHours * 0.7. Europe→East-Asia min is 9h,
+  // so the trigger boundary is 6.3h: pin both sides of it.
+  it("corrects a claim just below the 0.7 trigger threshold", () => {
+    const corrected = sanityCheckFlightHours("London", "Japan", 6); // < 6.3
+    expect(corrected).toBe(9);
+  });
+
+  it("trusts a claim just above the 0.7 trigger threshold", () => {
+    const result = sanityCheckFlightHours("London", "Japan", 7); // ≥ 6.3
+    expect(result).toBeNull();
+  });
+
+  // Europe has no `africa` entry in its row, but africa's row has `europe: 4`.
+  // This exercises the reverse-direction fallback lookup in sanityCheckFlightHours.
+  it("falls back to the reverse-direction region pair when only one is listed", () => {
+    const corrected = sanityCheckFlightHours("London", "Morocco", 1); // < 4 * 0.7
+    expect(corrected).toBe(4);
+  });
+
+  // The headline case this guard exists for: a hallucinated short flight to an
+  // *obscure* destination city absent from CITY_COORDS. The dest region is derived
+  // from the country, not the city, so obscurity of the city doesn't disable the guard.
+  it("catches a hallucinated short flight to an obscure city via its country", () => {
+    expect(hasCoordinates("Kanazawa")).toBe(false); // not in the static table
+    const corrected = sanityCheckFlightHours("London", "Japan", 2);
+    expect(corrected).toBe(9);
+  });
+
+  // Documented blind spot: when neither region-pair direction has an entry
+  // (e.g. South-Asia ↔ Africa), the guard cannot fire even for an absurd claim.
+  // Delhi→Nairobi is really ~7h; claiming 1h is NOT caught. Acceptable because the
+  // static table covers the common pairs and an uncorrected value just isn't filtered.
+  it("does not correct when no region pair is defined in either direction", () => {
+    const result = sanityCheckFlightHours("Delhi", "Kenya", 1);
+    expect(result).toBeNull();
+  });
 });

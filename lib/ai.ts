@@ -1,47 +1,54 @@
 /**
- * AI abstraction layer with multi-provider fallback (OpenRouter, Gemini, Local).
+ * AI abstraction layer with multi-provider fallback (Agnes, OpenRouter, Gemini, Local).
  *
  * The generate(...) helper will attempt the configured primary provider and
  * automatically fall back to other providers on transient failures (rate limits,
  * insufficient credits, missing endpoints). Provider order can be configured via
- * AI_PROVIDER_ORDER (comma-separated). Set AI_PROVIDER to prefer a primary.
+ * AI_PROVIDER_ORDER (comma-separated). Set AI_PROVIDER to prefer a primary
+ * (defaults to "agnes").
  */
 
+import { generateWithAgnes, streamWithAgnes } from "@/lib/agnes";
+import { generateWithNova, streamWithNova } from "@/lib/nova";
 import { generateWithOpenRouter, streamWithOpenRouter } from "@/lib/openrouter";
 import { generateWithGemini, streamWithGemini } from "@/lib/gemini";
 import { generateWithLocalModel, streamWithLocalModel } from "@/lib/localModel";
+import { createHealthCache } from "@/lib/healthCache";
 
-type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number };
+const DEFAULT_PRIMARY = "agnes";
+const DEFAULT_ORDER = ["agnes", "nova", "openrouter", "gemini", "local"];
 
-// Provider health cache to avoid retrying known-bad providers for a TTL
-const DEFAULT_PROVIDER_HEALTH_TTL_MS = Number(process.env.AI_PROVIDER_HEALTH_TTL_MS ?? "60000");
-
-type ProviderHealthEntry = { failedAt: number; ttl: number; error?: string };
-const providerHealth = new Map<string, ProviderHealthEntry>();
-
-function getProviderFailTTLForStatus(status: number) {
-  if (status === 429) return 60 * 1000; // 1 minute
-  const ttl402 = Number(process.env.AI_PROVIDER_402_TTL_MS ?? String(24 * 60 * 60 * 1000)); // 24h default
-  if (status === 402) return ttl402;
-  if (status === 404) return 60 * 60 * 1000; // 1h
-  return DEFAULT_PROVIDER_HEALTH_TTL_MS;
+/**
+ * Resolve the ordered, de-duplicated provider list from env.
+ * AI_PROVIDER sets the primary; AI_PROVIDER_ORDER sets the fallback chain. Both tolerate
+ * a comma-separated value (so AI_PROVIDER="agnes,openrouter" is treated as a list, not one
+ * bogus provider name).
+ */
+function resolveProviders(): string[] {
+  const split = (v?: string) =>
+    (v ? v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : []);
+  const primary = split(process.env.AI_PROVIDER);
+  const order = split(process.env.AI_PROVIDER_ORDER);
+  const chain = [
+    ...(primary.length ? primary : [DEFAULT_PRIMARY]),
+    ...(order.length ? order : DEFAULT_ORDER),
+  ];
+  return Array.from(new Set(chain));
 }
 
-function markProviderFailed(provider: string, status: number, error?: string) {
-  const ttl = getProviderFailTTLForStatus(status);
-  providerHealth.set(provider, { failedAt: Date.now(), ttl, error });
-  console.warn(`Marked provider ${provider} unhealthy for ${ttl / 1000}s: ${error ?? ""}`);
-}
+type GenerateOpts = { preferShortFirst?: boolean; tokenCandidates?: number[]; temperature?: number; taskType?: string };
 
-function isProviderBlacklisted(provider: string) {
-  const entry = providerHealth.get(provider);
-  if (!entry) return false;
-  if (Date.now() - entry.failedAt > entry.ttl) {
-    providerHealth.delete(provider);
-    return false;
-  }
-  return true;
-}
+// Provider-level health cache (distinct from each provider's per-MODEL cache): avoids
+// retrying a whole provider that recently failed, for a status-derived TTL.
+const providerHealth = createHealthCache({
+  label: "provider",
+  ttlForStatus(status) {
+    if (status === 429) return 60 * 1000; // 1 minute
+    if (status === 402) return Number(process.env.AI_PROVIDER_402_TTL_MS ?? String(24 * 60 * 60 * 1000)); // 24h
+    if (status === 404) return 60 * 60 * 1000; // 1h
+    return Number(process.env.AI_PROVIDER_HEALTH_TTL_MS ?? "60000");
+  },
+});
 
 export async function generate(
   systemPrompt: string,
@@ -49,23 +56,22 @@ export async function generate(
   model?: string,
   opts?: GenerateOpts
 ): Promise<string> {
-  const primary = (process.env.AI_PROVIDER || "openrouter").toLowerCase();
-  const orderEnv = process.env.AI_PROVIDER_ORDER; // e.g. "openrouter,gemini,local"
-  const fallbackOrder = (orderEnv ? orderEnv.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : ["openrouter", "gemini", "local"]);
-
-  // Build a unique provider list with primary first
-  const providers = Array.from(new Set([primary, ...fallbackOrder]));
+  const providers = resolveProviders();
 
   let lastError: string | null = null;
 
   for (const provider of providers) {
-    if (isProviderBlacklisted(provider)) {
+    if (providerHealth.isBlacklisted(provider)) {
       console.debug(`Skipping blacklisted provider ${provider}`);
       continue;
     }
 
     try {
       switch (provider) {
+        case "agnes":
+          return await generateWithAgnes(systemPrompt, userPrompt, model, opts as any);
+        case "nova":
+          return await generateWithNova(systemPrompt, userPrompt, model, opts as any);
         case "openrouter":
           return await generateWithOpenRouter(systemPrompt, userPrompt, model, opts as any);
         case "gemini":
@@ -85,10 +91,10 @@ export async function generate(
       if (m) status = Number(m[1]);
 
       if (status) {
-        markProviderFailed(provider, status, message);
+        providerHealth.markFailed(provider, status, message);
       } else {
         // For unknown errors, mark provider with a short TTL to avoid hot-looping
-        markProviderFailed(provider, 500, message);
+        providerHealth.markFailed(provider, 500, message);
       }
 
       // Continue to next provider
@@ -100,21 +106,21 @@ export async function generate(
 }
 
 export async function stream(messages: any[], model?: string): Promise<ReadableStream> {
-  const primary = (process.env.AI_PROVIDER || "openrouter").toLowerCase();
-  const orderEnv = process.env.AI_PROVIDER_ORDER; // e.g. "openrouter,gemini,local"
-  const fallbackOrder = (orderEnv ? orderEnv.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : ["openrouter", "gemini", "local"]);
-
-  const providers = Array.from(new Set([primary, ...fallbackOrder]));
+  const providers = resolveProviders();
   let lastError: string | null = null;
 
   for (const provider of providers) {
-    if (isProviderBlacklisted(provider)) {
+    if (providerHealth.isBlacklisted(provider)) {
       console.debug(`Skipping blacklisted provider ${provider}`);
       continue;
     }
 
     try {
       switch (provider) {
+        case "agnes":
+          return await streamWithAgnes(messages as any, model);
+        case "nova":
+          return await streamWithNova(messages as any, model);
         case "openrouter":
           return await streamWithOpenRouter(messages as any, model);
         case "gemini":
@@ -133,9 +139,9 @@ export async function stream(messages: any[], model?: string): Promise<ReadableS
       if (m) status = Number(m[1]);
 
       if (status) {
-        markProviderFailed(provider, status, message);
+        providerHealth.markFailed(provider, status, message);
       } else {
-        markProviderFailed(provider, 500, message);
+        providerHealth.markFailed(provider, 500, message);
       }
 
       continue;

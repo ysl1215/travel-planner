@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchHotels, toAccomEstimate, cityToIataCode, isConfigured } from "@/lib/amadeus";
 import { getAccomEstimate } from "@/lib/accomEstimates";
+import { createTtlCache } from "@/lib/ttlCache";
 
-// In-memory cache (TTL: 30 minutes)
-const CACHE_TTL_MS = 30 * 60 * 1000;
-const cache = new Map<string, { data: any; timestamp: number }>();
+// In-memory cache (TTL: 30 minutes, bounded)
+const cache = createTtlCache<any>({ ttlMs: 30 * 60 * 1000, max: 200 });
 
 /**
  * GET /api/hotels?city=Paris&checkIn=2026-06-01&checkOut=2026-06-08&adults=2
@@ -26,8 +26,8 @@ export async function GET(request: NextRequest) {
 
   const cacheKey = `${city.toLowerCase()}-${checkIn}-${checkOut}-${adults}`;
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return NextResponse.json(cached.data);
+  if (cached) {
+    return NextResponse.json(cached);
   }
 
   // Try Amadeus live search
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
           sampleCount: live.sampleCount,
           source: "live" as const,
         };
-        cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+        cache.set(cacheKey, responseData);
         return NextResponse.json(responseData);
       }
     }
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
   const staticEstimate = getAccomEstimate(city);
   if (staticEstimate) {
     const responseData = { ...staticEstimate, sampleCount: 0, source: "static" as const };
-    cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    cache.set(cacheKey, responseData);
     return NextResponse.json(responseData);
   }
 

@@ -2,6 +2,14 @@ import { TripPlannerInput } from "./types";
 import { sanitize, sanitizeArray } from "./sanitize";
 import { estimateFlightHours } from "./flightTime";
 
+/**
+ * Single source of truth for the destination JSON shape the model must return. Referenced
+ * by the main suggest prompt and both re-prompts (previously hardcoded verbatim in 3 places)
+ * so the schema can't drift between them.
+ */
+export const DESTINATION_SCHEMA_EXAMPLE =
+  `{"id":"string","country":"string","city":"string","airportCode":"3-letter IATA","rationale":"string","highlights":["..."],"estimatedFlightHours":0.0,"estimatedBudgetFit":"excellent|good|stretch","bestTimeToVisit":"string","vibeMatch":["..."],"imageQuery":"string"}`;
+
 function buildFlightTimeExamples(homeCity: string, maxHours?: number): string {
   const references = [
     "tokyo", "seoul", "bangkok", "singapore", "dubai",
@@ -55,8 +63,8 @@ HARD RULES:
 - Prioritise places a well-travelled local would recommend to a friend, not a tourist.
 - The rationale MUST reference the user's specific priorities above — not generic "beautiful scenery" or "rich culture".
 
-Return a compact JSON array. Each item:
-{"id":"string","country":"string","city":"string","airportCode":"3-letter IATA","rationale":"2-3 sentences referencing user priorities","highlights":["..."],"estimatedFlightHours":0.0,"estimatedBudgetFit":"excellent|good|stretch","bestTimeToVisit":"string","vibeMatch":["..."],"imageQuery":"string"}`;
+Return a compact JSON array. Each item (rationale = 2-3 sentences referencing user priorities):
+${DESTINATION_SCHEMA_EXAMPLE}`;
 }
 
 export function buildItineraryPrompt(
@@ -78,8 +86,8 @@ export function buildItineraryPrompt(
 Budget: travel ${budgetSplit.travel}, accommodation ${budgetSplit.accommodation}, food ${budgetSplit.food}, activities ${budgetSplit.activities}, misc ${budgetSplit.misc} (${input.currency}).
 ${input.travelPriorities ? `\nUSER PRIORITIES (shape the entire itinerary around this): ${sanitize(input.travelPriorities, 500)}` : ""}${input.pastTrips ? `\nCALIBRATION: ${sanitize(input.pastTrips, 300)}` : ""}${contextBlock}
 
-Return a single compact JSON object only — no markdown, no commentary:
-{"destination":"City, Country","totalDays":${tripDays},"overview":"string","days":[{"day":1,"location":"string","theme":"string","morning":[{"time":"string","activity":"string","location":"string","duration":"string","cost":"string","tips":"string","type":"attraction|food|transport|accommodation|activity"}],"afternoon":[],"evening":[],"travelNote":"string","accommodation":"string"}],"clusters":[{"cluster":"area name","attractions":["name1","name2"],"options":[{"label":"Half day","attractions":["name1"],"hours":4,"tradeoff":"Miss name2"},{"label":"Full day","attractions":["name1","name2"],"hours":8,"tradeoff":"Physically demanding"}],"recommendation":"Full day","recommendation_reason":"string"}],"topAttractions":[{"name":"string","type":"tourist|local|nature|food|culture","description":"string","estimatedDuration":"string","waitTime":"string","tips":"string","offBeatenPath":false,"cost":"free|cheap|moderate|expensive"}],"foodRecommendations":[{"name":"string","cuisine":"string","description":"string","priceRange":"string","mustTry":["string"],"touristTrap":false,"location":"string"}],"route":[{"from":"string","to":"string","mode":"string","duration":"string","cost":"string","tips":"string"}],"practicalTips":["string"],"bestTimeToVisit":"string"}
+Return a single compact JSON object only — no markdown, no commentary. Schema (all string fields free-text; enums shown with |; arrays may repeat their element):
+{"destination":"City, Country","totalDays":${tripDays},"overview":str,"days":[{"day":int,"location":str,"theme":str,"morning":[{"time":str,"activity":str,"location":str,"duration":str,"cost":str,"tips":str,"type":"attraction|food|transport|accommodation|activity"}],"afternoon":[…same],"evening":[…same],"travelNote":str,"accommodation":str}],"clusters":[{"cluster":str,"attractions":[str],"options":[{"label":str,"attractions":[str],"hours":num,"tradeoff":str}],"recommendation":str,"recommendation_reason":str}],"topAttractions":[{"name":str,"type":"tourist|local|nature|food|culture","description":str,"estimatedDuration":str,"waitTime":str,"tips":str,"offBeatenPath":bool,"cost":"free|cheap|moderate|expensive"}],"foodRecommendations":[{"name":str,"cuisine":str,"description":str,"priceRange":str,"mustTry":[str],"touristTrap":bool,"location":str}],"route":[{"from":str,"to":str,"mode":str,"duration":str,"cost":str,"tips":str}],"practicalTips":[str],"bestTimeToVisit":str}
 
 Rules:
 - clusters: only include when 2+ attractions share a geographic area (e.g. multiple lakes, trails, or neighbourhoods within 30-60 min of each other). Each cluster must have 2-3 options with realistic hours and honest tradeoffs. Omit clusters array if no such groupings exist.
